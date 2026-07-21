@@ -182,6 +182,7 @@ let state = {
   tripTypes: [],
   tripCollector: null, // {selectedIds:[], perHaji:{id:{foc,trips:{tripTypeId:bool}}}, template:{trips:{}}, method, paidOn, reference, notes, roomFilter, searchQuery}
   paymentTripItems: [],
+  tripReport: null, // {mode:'trip'|'date', dateFrom, dateTo}
 };
 
 // ---------- PWA ----------
@@ -333,6 +334,12 @@ function hajiRoom(hajiId, leg){
 function roomOccupants(roomId){ return state.roomAssignments.filter(a=>a.room_id===roomId).map(a=>hajiById(a.haji_id)).filter(Boolean); }
 function busOccupants(busId){ return state.busAssignments.filter(a=>a.bus_id===busId).map(a=>hajiById(a.haji_id)).filter(Boolean); }
 function tripsForPayment(paymentId){ return state.paymentTripItems.filter(t=>t.payment_id===paymentId); }
+function ageCategory(age){
+  if(age==null) return 'Adult';
+  if(age < 5) return 'Under 5';
+  if(age <= 9) return '5-9 Years';
+  return 'Adult';
+}
 
 function openModal(type, data){ state.modal = {type, data: data||{}}; render(); }
 function closeModal(){ state.modal = null; render(); }
@@ -400,6 +407,7 @@ function render(){
   else if(state.view==='buses') content.innerHTML = renderBuses();
   else if(state.view==='payments') content.innerHTML = renderPayments();
   else if(state.view==='tripCollector') content.innerHTML = renderTripCollector();
+  else if(state.view==='tripReport') content.innerHTML = renderTripReport();
   else if(state.view==='staff') { content.innerHTML = renderStaff(); loadStaffList(); }
 }
 
@@ -606,7 +614,7 @@ function renderHajis(){
     </div>
     <div class="card table-wrap">
       <table>
-        <thead><tr><th>Name</th><th>Passport</th><th>Phone</th><th>Gender</th><th>Package</th><th>Balance</th><th>Family code</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Passport</th><th>Phone</th><th>Gender</th><th>Age</th><th>Package</th><th>Balance</th><th>Family code</th><th></th></tr></thead>
         <tbody>
           ${state.hajis.map(h=>{
             const pkg = packageById(h.package_id);
@@ -618,12 +626,13 @@ function renderHajis(){
               <td class="mono">${esc(h.passport_no||'—')}</td>
               <td>${esc(h.phone||'—')}</td>
               <td>${h.gender||'—'}</td>
+              <td>${h.age??'—'}</td>
               <td>${pkg?esc(pkg.name):'—'}</td>
               <td><span class="pill ${bal<=0?'ok':'bad'}">${fmt(bal)}</span></td>
               <td>${esc(h.family_code||'—')}</td>
               <td class="row-actions">${can('manageHajis')?`<button class="ghost" onclick="openModal('haji', hajiById('${h.id}'))">Edit</button>`:''}</td>
             </tr>`;
-          }).join('') || `<tr><td colspan="8" class="empty">No hajis in this group yet.</td></tr>`}
+          }).join('') || `<tr><td colspan="9" class="empty">No hajis in this group yet.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -639,6 +648,7 @@ async function saveHaji(e, id){
     passport_no: f.passport_no.value,
     phone: f.phone.value,
     gender: f.gender.value,
+    age: f.age.value === '' ? null : parseInt(f.age.value, 10),
     is_elderly: f.is_elderly.checked,
     needs_wheelchair: f.needs_wheelchair.checked,
     family_code: f.family_code.value,
@@ -776,7 +786,8 @@ function renderPayments(){
     <div class="toolbar">
       ${can('managePayments') ? `<button class="primary" onclick="openModal('payment')">+ Record payment</button>
       <button class="gold" onclick="openTripCollector()">Collect trip payments</button>
-      <button class="ghost" onclick="openModal('tripTypes')">Manage trip types</button>` : ''}
+      <button class="ghost" onclick="openModal('tripTypes')">Manage trip types</button>
+      <button class="ghost" onclick="openTripReport()">Trip payment report</button>` : ''}
     </div>
     <div class="card table-wrap">
       <table>
@@ -1055,7 +1066,7 @@ async function saveTripPayments(){
     }).select().single();
     if(error){ showNotice(error.message, 'error'); return; }
     if(checkedTrips.length){
-      const items = checkedTrips.map(t=>({ payment_id: paymentRow.id, trip_type_id: t.id, trip_name: t.name, price: ph.foc?0:Number(t.price) }));
+      const items = checkedTrips.map(t=>({ payment_id: paymentRow.id, trip_type_id: t.id, trip_name: t.name, price: ph.foc?0:Number(t.price), is_foc: ph.foc }));
       await sb.from('payment_trip_items').insert(items);
     }
   }
@@ -1065,6 +1076,116 @@ async function saveTripPayments(){
   await loadGroupData();
   showNotice(`Saved payments for ${count} customer${count===1?'':'s'}.`, 'success');
   render();
+}
+
+// ---------- TRIP PAYMENT REPORT ----------
+const REPORT_CATEGORIES = ['Adult','5-9 Years','Under 5'];
+function openTripReport(){
+  state.tripReport = { mode:'trip', dateFrom:'', dateTo:'' };
+  state.view = 'tripReport';
+  state.mobileNavOpen = false;
+  render();
+}
+function closeTripReport(){
+  state.tripReport = null;
+  state.view = 'payments';
+  render();
+}
+function setTripReportMode(mode){ state.tripReport.mode = mode; render(); }
+function setTripReportDate(field, value){ state.tripReport[field] = value; render(); }
+function reportRows(){
+  const tr = state.tripReport;
+  return state.paymentTripItems.map(item=>{
+    const payment = state.payments.find(p=>p.id===item.payment_id);
+    if(!payment) return null;
+    if(tr.dateFrom && payment.paid_on < tr.dateFrom) return null;
+    if(tr.dateTo && payment.paid_on > tr.dateTo) return null;
+    const haji = hajiById(payment.haji_id);
+    return { ...item, paidOn: payment.paid_on, category: ageCategory(haji?.age) };
+  }).filter(Boolean);
+}
+function orderedTripNames(rows){
+  const names = [...new Set(rows.map(r=>r.trip_name))];
+  return [
+    ...state.tripTypes.map(t=>t.name).filter(n=>names.includes(n)),
+    ...names.filter(n=>!state.tripTypes.some(t=>t.name===n)),
+  ];
+}
+function renderReportByTrip(rows){
+  const names = orderedTripNames(rows);
+  return `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));align-items:start;">
+    ${names.map(name=>{
+      const group = rows.filter(r=>r.trip_name===name);
+      const catRows = REPORT_CATEGORIES.map(cat=>({
+        cat,
+        paid: group.filter(r=>r.category===cat && !r.is_foc).length,
+        foc: group.filter(r=>r.category===cat && r.is_foc).length,
+      }));
+      const paidSubtotal = catRows.reduce((s,c)=>s+c.paid,0);
+      const focSubtotal = catRows.reduce((s,c)=>s+c.foc,0);
+      return `
+        <div class="card table-wrap">
+          <table>
+            <thead><tr><th>Category</th><th>${esc(name)} Paid</th><th>${esc(name)} FOC</th></tr></thead>
+            <tbody>
+              ${catRows.map(c=>`<tr><td>${c.cat}</td><td>${c.paid}</td><td>${c.foc}</td></tr>`).join('')}
+              <tr><td><strong>Subtotal</strong></td><td><strong>${paidSubtotal}</strong></td><td><strong>${focSubtotal}</strong></td></tr>
+              <tr><td><strong>Total</strong></td><td colspan="2"><strong>${paidSubtotal+focSubtotal}</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+      `;
+    }).join('')}
+  </div>`;
+}
+function renderReportByDate(rows){
+  const dates = [...new Set(rows.map(r=>r.paidOn))].sort((a,b)=>b.localeCompare(a));
+  return dates.map(date=>{
+    const dayRows = rows.filter(r=>r.paidOn===date);
+    const names = orderedTripNames(dayRows);
+    const tripRows = names.map(name=>{
+      const group = dayRows.filter(r=>r.trip_name===name);
+      const paid = group.filter(r=>!r.is_foc).length;
+      const foc = group.filter(r=>r.is_foc).length;
+      const amount = group.reduce((s,r)=>s+(r.is_foc?0:Number(r.price||0)),0);
+      return { name, paid, foc, total: paid+foc, amount };
+    });
+    const dayTotalCount = tripRows.reduce((s,t)=>s+t.total,0);
+    const dayTotalAmount = tripRows.reduce((s,t)=>s+t.amount,0);
+    return `
+      <div class="card table-wrap" style="margin-bottom:16px;">
+        <h3 style="margin-bottom:10px;">${date}</h3>
+        <table>
+          <thead><tr><th>Trip</th><th>Paid</th><th>FOC</th><th>Total</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${tripRows.map(t=>`<tr><td>${esc(t.name)}</td><td>${t.paid}</td><td>${t.foc}</td><td>${t.total}</td><td>${fmt(t.amount)}</td></tr>`).join('')}
+            <tr><td colspan="3"><strong>Day total</strong></td><td><strong>${dayTotalCount}</strong></td><td><strong>${fmt(dayTotalAmount)}</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+    `;
+  }).join('');
+}
+function renderTripReport(){
+  const tr = state.tripReport;
+  if(!tr) return '';
+  const rows = reportRows();
+  return `
+    <div class="toolbar">
+      <button class="ghost" onclick="closeTripReport()">← Back to payments</button>
+      <button class="${tr.mode==='trip'?'primary':'ghost'}" onclick="setTripReportMode('trip')">By trip name</button>
+      <button class="${tr.mode==='date'?'primary':'ghost'}" onclick="setTripReportMode('date')">By date</button>
+    </div>
+    <div class="card" style="margin-bottom:16px;max-width:420px;">
+      <div class="two-col">
+        <div class="field"><label>From</label><input type="date" value="${tr.dateFrom}" onchange="setTripReportDate('dateFrom',this.value)"/></div>
+        <div class="field"><label>To</label><input type="date" value="${tr.dateTo}" onchange="setTripReportDate('dateTo',this.value)"/></div>
+      </div>
+    </div>
+    ${rows.length===0
+      ? `<div class="empty"><h3>No trip payments yet</h3><p>Use "Collect trip payments" to record some first.</p></div>`
+      : (tr.mode==='trip' ? renderReportByTrip(rows) : renderReportByDate(rows))}
+  `;
 }
 
 // ---------- STAFF ----------
@@ -1193,9 +1314,10 @@ function renderModal(){
           <div class="field"><label>Gender</label>
             <select name="gender"><option value="male" ${data.gender==='male'?'selected':''}>Male</option><option value="female" ${data.gender==='female'?'selected':''}>Female</option></select>
           </div>
-          <div class="field"><label>Package</label>
-            <select name="package_id"><option value="">—</option>${state.packages.map(p=>`<option value="${p.id}" ${data.package_id===p.id?'selected':''}>${esc(p.name)} (${fmt(p.price)})</option>`).join('')}</select>
-          </div>
+          <div class="field"><label>Age</label><input type="number" min="0" max="120" name="age" value="${data.age??''}" placeholder="e.g. 34"/></div>
+        </div>
+        <div class="field"><label>Package</label>
+          <select name="package_id"><option value="">—</option>${state.packages.map(p=>`<option value="${p.id}" ${data.package_id===p.id?'selected':''}>${esc(p.name)} (${fmt(p.price)})</option>`).join('')}</select>
         </div>
         <div class="field"><label>Family code (group family members together)</label><input name="family_code" value="${esc(data.family_code||'')}"/></div>
         <div class="two-col">
