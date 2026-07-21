@@ -182,7 +182,8 @@ let state = {
   tripTypes: [],
   tripCollector: null, // {selectedIds:[], perHaji:{id:{foc,trips:{tripTypeId:bool}}}, template:{trips:{}}, method, paidOn, reference, notes, roomFilter, searchQuery}
   paymentTripItems: [],
-  tripReport: null, // {mode:'trip'|'date', dateFrom, dateTo}
+  tripSummaryReport: null, // {dateFrom, dateTo}
+  tripDateReport: null, // {dateFrom, dateTo}
 };
 
 // ---------- PWA ----------
@@ -407,7 +408,8 @@ function render(){
   else if(state.view==='buses') content.innerHTML = renderBuses();
   else if(state.view==='payments') content.innerHTML = renderPayments();
   else if(state.view==='tripCollector') content.innerHTML = renderTripCollector();
-  else if(state.view==='tripReport') content.innerHTML = renderTripReport();
+  else if(state.view==='tripSummary') content.innerHTML = renderTripSummary();
+  else if(state.view==='tripDateReport') content.innerHTML = renderTripDateReport();
   else if(state.view==='staff') { content.innerHTML = renderStaff(); loadStaffList(); }
 }
 
@@ -787,7 +789,8 @@ function renderPayments(){
       ${can('managePayments') ? `<button class="primary" onclick="openModal('payment')">+ Record payment</button>
       <button class="gold" onclick="openTripCollector()">Collect trip payments</button>
       <button class="ghost" onclick="openModal('tripTypes')">Manage trip types</button>
-      <button class="ghost" onclick="openTripReport()">Trip payment report</button>` : ''}
+      <button class="ghost" onclick="openTripSummary()">Trip payment summary</button>
+      <button class="ghost" onclick="openTripDateReport()">Date-wise collection</button>` : ''}
     </div>
     <div class="card table-wrap">
       <table>
@@ -1080,26 +1083,38 @@ async function saveTripPayments(){
 
 // ---------- TRIP PAYMENT REPORT ----------
 const REPORT_CATEGORIES = ['Adult','5-9 Years','Under 5'];
-function openTripReport(){
-  state.tripReport = { mode:'trip', dateFrom:'', dateTo:'' };
-  state.view = 'tripReport';
+function openTripSummary(){
+  state.tripSummaryReport = { dateFrom:'', dateTo:'' };
+  state.view = 'tripSummary';
   state.mobileNavOpen = false;
   render();
 }
-function closeTripReport(){
-  state.tripReport = null;
+function closeTripSummary(){
+  state.tripSummaryReport = null;
   state.view = 'payments';
   render();
 }
-function setTripReportMode(mode){ state.tripReport.mode = mode; render(); }
-function setTripReportDate(field, value){ state.tripReport[field] = value; render(); }
-function reportRows(){
-  const tr = state.tripReport;
+function setTripSummaryDate(field, value){ state.tripSummaryReport[field] = value; render(); }
+
+function openTripDateReport(){
+  state.tripDateReport = { dateFrom:'', dateTo:'' };
+  state.view = 'tripDateReport';
+  state.mobileNavOpen = false;
+  render();
+}
+function closeTripDateReport(){
+  state.tripDateReport = null;
+  state.view = 'payments';
+  render();
+}
+function setTripDateReportDate(field, value){ state.tripDateReport[field] = value; render(); }
+
+function reportRows(filter){
   return state.paymentTripItems.map(item=>{
     const payment = state.payments.find(p=>p.id===item.payment_id);
     if(!payment) return null;
-    if(tr.dateFrom && payment.paid_on < tr.dateFrom) return null;
-    if(tr.dateTo && payment.paid_on > tr.dateTo) return null;
+    if(filter.dateFrom && payment.paid_on < filter.dateFrom) return null;
+    if(filter.dateTo && payment.paid_on > filter.dateTo) return null;
     const haji = hajiById(payment.haji_id);
     return { ...item, paidOn: payment.paid_on, category: ageCategory(haji?.age) };
   }).filter(Boolean);
@@ -1166,25 +1181,45 @@ function renderReportByDate(rows){
     `;
   }).join('');
 }
-function renderTripReport(){
-  const tr = state.tripReport;
-  if(!tr) return '';
-  const rows = reportRows();
+function renderTripSummary(){
+  const fr = state.tripSummaryReport;
+  if(!fr) return '';
+  const rows = reportRows(fr);
   return `
     <div class="toolbar">
-      <button class="ghost" onclick="closeTripReport()">← Back to payments</button>
-      <button class="${tr.mode==='trip'?'primary':'ghost'}" onclick="setTripReportMode('trip')">By trip name</button>
-      <button class="${tr.mode==='date'?'primary':'ghost'}" onclick="setTripReportMode('date')">By date</button>
+      <button class="ghost" onclick="closeTripSummary()">← Back to payments</button>
     </div>
+    <h2 style="margin-bottom:14px;">Trip payment summary</h2>
     <div class="card" style="margin-bottom:16px;max-width:420px;">
       <div class="two-col">
-        <div class="field"><label>From</label><input type="date" value="${tr.dateFrom}" onchange="setTripReportDate('dateFrom',this.value)"/></div>
-        <div class="field"><label>To</label><input type="date" value="${tr.dateTo}" onchange="setTripReportDate('dateTo',this.value)"/></div>
+        <div class="field"><label>From</label><input type="date" value="${fr.dateFrom}" onchange="setTripSummaryDate('dateFrom',this.value)"/></div>
+        <div class="field"><label>To</label><input type="date" value="${fr.dateTo}" onchange="setTripSummaryDate('dateTo',this.value)"/></div>
       </div>
     </div>
     ${rows.length===0
       ? `<div class="empty"><h3>No trip payments yet</h3><p>Use "Collect trip payments" to record some first.</p></div>`
-      : (tr.mode==='trip' ? renderReportByTrip(rows) : renderReportByDate(rows))}
+      : renderReportByTrip(rows)}
+  `;
+}
+
+function renderTripDateReport(){
+  const fr = state.tripDateReport;
+  if(!fr) return '';
+  const rows = reportRows(fr);
+  return `
+    <div class="toolbar">
+      <button class="ghost" onclick="closeTripDateReport()">← Back to payments</button>
+    </div>
+    <h2 style="margin-bottom:14px;">Date-wise collection</h2>
+    <div class="card" style="margin-bottom:16px;max-width:420px;">
+      <div class="two-col">
+        <div class="field"><label>From</label><input type="date" value="${fr.dateFrom}" onchange="setTripDateReportDate('dateFrom',this.value)"/></div>
+        <div class="field"><label>To</label><input type="date" value="${fr.dateTo}" onchange="setTripDateReportDate('dateTo',this.value)"/></div>
+      </div>
+    </div>
+    ${rows.length===0
+      ? `<div class="empty"><h3>No trip payments yet</h3><p>Use "Collect trip payments" to record some first.</p></div>`
+      : renderReportByDate(rows)}
   `;
 }
 
