@@ -71,11 +71,11 @@
   .group-select{max-width:280px;}
   .grid{display:grid;gap:14px;}
   .grid-4{grid-template-columns:repeat(4,1fr);}
-  .hamburger-btn{display:none;background:transparent;border:1px solid var(--line);color:var(--teal);font-size:16px;line-height:1;padding:8px 11px;border-radius:8px;flex-shrink:0;}
   .sidebar-close-btn{display:none;position:absolute;top:14px;right:14px;background:transparent;border:none;color:var(--sand);font-size:20px;line-height:1;cursor:pointer;padding:4px;}
   .sidebar-backdrop{display:none;}
   .install-btn{margin-top:10px;width:100%;}
   .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .bottom-nav{display:none;}
   .stat-label{font-size:11px;text-transform:uppercase;color:#6b6252;letter-spacing:.05em;font-weight:600;}
   .stat-value{font-family:'Fraunces',serif;font-size:28px;color:var(--teal);margin-top:4px;}
   .row-actions{display:flex;gap:6px;}
@@ -127,8 +127,7 @@
       transition:background .25s ease;z-index:65;
     }
     #app.nav-open .sidebar-backdrop{background:rgba(20,20,18,.45);pointer-events:auto;}
-    .hamburger-btn{display:inline-flex;align-items:center;justify-content:center;}
-    #main{padding:16px;}
+    #main{padding:16px 16px calc(72px + env(safe-area-inset-bottom, 0px));}
     .grid-4{grid-template-columns:repeat(2,1fr);}
     .two-col{grid-template-columns:1fr;}
     .auth-card{width:92vw;max-width:400px;padding:28px 22px;}
@@ -137,6 +136,16 @@
     .collector-payment-fields{grid-template-columns:1fr;min-width:0;}
     .collector-footer{position:static;flex-direction:column;align-items:stretch;box-shadow:none;}
     .trip-row .who{min-width:100%;}
+    .bottom-nav{
+      display:flex;position:fixed;left:0;right:0;bottom:0;z-index:55;
+      background:var(--teal);border-top:1px solid rgba(255,255,255,.1);
+      padding-bottom:env(safe-area-inset-bottom, 0px);
+    }
+    .bottom-nav-item{
+      flex:1;text-align:center;padding:10px 4px 8px;font-size:11px;font-weight:600;
+      color:#cfe0dc;cursor:pointer;letter-spacing:.01em;
+    }
+    .bottom-nav-item.active{color:var(--gold-soft);}
   }
 
   @media (max-width:600px){
@@ -374,6 +383,7 @@ function closeNotice(){ document.getElementById('notice-root').innerHTML = ''; }
 // ---------- RENDER ----------
 function render(){
   if(!state.session){ renderAuth(); return; }
+  const navItems = getNavItems();
   root.innerHTML = `
     <div id="app" class="${state.mobileNavOpen?'nav-open':''}">
       <div class="sidebar-backdrop" onclick="closeNav()"></div>
@@ -382,21 +392,13 @@ function render(){
         <h1>Rihla</h1>
         <div class="tagline">Umrah group operations</div>
         <div style="color:var(--gold-soft);font-size:11px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em;">Signed in as ${state.myRole||'—'}</div>
-        ${navItem('dashboard','Dashboard')}
-        ${state.myRole==='admin' ? navItem('groups','Groups') : ''}
-        ${(can('manageHajis')||state.myRole==='accountant') ? navItem('hajis','Hajis') : ''}
-        ${can('manageRooms') ? navItem('rooms','Rooms') : ''}
-        ${can('manageBuses') ? navItem('buses','Buses') : ''}
-        ${(can('managePayments')||state.myRole==='admin') ? navItem('payments','Payments') : ''}
-        ${(can('managePayments')||state.myRole==='admin') ? `<div class="nav-item ${['tripCollector','tripSummary','tripDateReport'].includes(state.view)?'active':''}" onclick="openTripCollector()">Trip Payments</div>` : ''}
-        ${can('manageStaff') ? navItem('staff','Staff') : ''}
+        ${navItems.map(item=>`<div class="nav-item ${item.activeViews.includes(state.view)?'active':''}" onclick="${item.onclick}">${item.label}</div>`).join('')}
         <div style="flex:1"></div>
         ${state.canInstall ? `<button class="gold install-btn" onclick="installApp()">⭳ Install app</button>` : ''}
         <button class="ghost" onclick="signOut()" style="margin-top:10px;">Sign out</button>
       </div>
       <div id="main">
         <div class="topbar">
-          <button class="hamburger-btn" onclick="toggleNav()" aria-label="Open menu">☰</button>
           <div>
             <label>Active group</label>
             <select class="group-select" onchange="switchGroup(this.value)">
@@ -406,6 +408,10 @@ function render(){
         </div>
         <div id="content"></div>
       </div>
+      <nav class="bottom-nav">
+        ${navItems.slice(0,4).map(item=>`<div class="bottom-nav-item ${item.activeViews.includes(state.view)?'active':''}" onclick="${item.onclick}">${item.label}</div>`).join('')}
+        ${navItems.length>4 ? `<div class="bottom-nav-item ${state.mobileNavOpen?'active':''}" onclick="toggleNav()">More</div>` : ''}
+      </nav>
     </div>
     ${state.modal ? renderModal() : ''}
   `;
@@ -422,6 +428,18 @@ function render(){
   else if(state.view==='staff') { content.innerHTML = renderStaff(); loadStaffList(); }
 }
 
+function getNavItems(){
+  const items = [];
+  items.push({ label:'Dashboard', activeViews:['dashboard'], onclick:"setView('dashboard')" });
+  if(state.myRole==='admin') items.push({ label:'Groups', activeViews:['groups'], onclick:"setView('groups')" });
+  if(can('manageHajis')||state.myRole==='accountant') items.push({ label:'Hajis', activeViews:['hajis'], onclick:"setView('hajis')" });
+  if(can('manageRooms')) items.push({ label:'Rooms', activeViews:['rooms'], onclick:"setView('rooms')" });
+  if(can('manageBuses')) items.push({ label:'Buses', activeViews:['buses'], onclick:"setView('buses')" });
+  if(can('managePayments')||state.myRole==='admin') items.push({ label:'Payments', activeViews:['payments'], onclick:"setView('payments')" });
+  if(can('managePayments')||state.myRole==='admin') items.push({ label:'Trip Payments', activeViews:['tripCollector','tripSummary','tripDateReport'], onclick:"openTripCollector()" });
+  if(can('manageStaff')) items.push({ label:'Staff', activeViews:['staff'], onclick:"setView('staff')" });
+  return items;
+}
 function navItem(view, label){
   return `<div class="nav-item ${state.view===view?'active':''}" onclick="setView('${view}')">${label}</div>`;
 }
