@@ -100,6 +100,15 @@
   .capacity-bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:6px;}
   .capacity-fill{height:100%;background:var(--teal);}
   .capacity-fill.over{background:var(--danger);}
+  .collector-template{display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:10px 14px;background:var(--sand-deep);border-radius:8px;margin-bottom:12px;}
+  .trip-row{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);}
+  .trip-row:last-child{border-bottom:none;}
+  .trip-row .who{min-width:170px;flex:1 1 170px;}
+  .trip-check{display:flex;align-items:center;gap:6px;font-size:12px;color:#4a4436;white-space:nowrap;}
+  .trip-check input{width:auto;}
+  .trip-total{font-weight:700;margin-left:auto;white-space:nowrap;}
+  .collector-footer{position:sticky;bottom:0;background:var(--sand);border-top:2px solid var(--teal);padding:14px 18px;margin-top:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;border-radius:0 0 var(--radius) var(--radius);box-shadow:0 -4px 16px rgba(28,35,33,.08);}
+  .collector-payment-fields{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;flex:1;min-width:280px;max-width:520px;}
   @media (max-width:900px){
     #main{max-width:100%;}
   }
@@ -125,6 +134,9 @@
     .auth-card{width:92vw;max-width:400px;padding:28px 22px;}
     input,select,textarea{font-size:16px;} /* prevent iOS auto-zoom on focus */
     .row-actions{flex-wrap:wrap;}
+    .collector-payment-fields{grid-template-columns:1fr;min-width:0;}
+    .collector-footer{position:static;flex-direction:column;align-items:stretch;box-shadow:none;}
+    .trip-row .who{min-width:100%;}
   }
 
   @media (max-width:600px){
@@ -387,6 +399,7 @@ function render(){
   else if(state.view==='rooms') content.innerHTML = renderRooms();
   else if(state.view==='buses') content.innerHTML = renderBuses();
   else if(state.view==='payments') content.innerHTML = renderPayments();
+  else if(state.view==='tripCollector') content.innerHTML = renderTripCollector();
   else if(state.view==='staff') { content.innerHTML = renderStaff(); loadStaffList(); }
 }
 
@@ -841,6 +854,217 @@ async function savePayment(e){
     reference: f.reference.value, notes: f.notes.value
   });
   closeModal(); await loadGroupData(); render();
+}
+
+// ---------- TRIP PAYMENT COLLECTOR ----------
+function openTripCollector(){
+  state.tripCollector = {
+    selectedIds: [],
+    perHaji: {},
+    template: {},
+    method: 'cash',
+    paidOn: new Date().toISOString().slice(0,10),
+    reference: '',
+  };
+  state.view = 'tripCollector';
+  state.mobileNavOpen = false;
+  render();
+}
+function closeTripCollector(){
+  state.tripCollector = null;
+  state.view = 'payments';
+  render();
+}
+function addHajiToCollector(hajiId){
+  const tc = state.tripCollector;
+  if(!tc.selectedIds.includes(hajiId)){
+    tc.selectedIds.push(hajiId);
+    tc.perHaji[hajiId] = { foc:false, trips:{} };
+  }
+}
+function addRoomToCollector(){
+  const roomId = document.getElementById('collector-room').value;
+  if(!roomId) return;
+  roomOccupants(roomId).forEach(h=>addHajiToCollector(h.id));
+  render();
+}
+function searchIndividualForCollector(){
+  const q = (document.getElementById('collector-search').value||'').trim().toLowerCase();
+  if(!q) return;
+  const matches = state.hajis.filter(h=>
+    (h.full_name||'').toLowerCase().includes(q) ||
+    (h.passport_no||'').toLowerCase().includes(q) ||
+    (h.family_code||'').toLowerCase().includes(q)
+  );
+  if(!matches.length){ showNotice('No matching customer found.', 'error'); return; }
+  matches.forEach(h=>addHajiToCollector(h.id));
+  render();
+}
+function removeFromCollector(hajiId){
+  const tc = state.tripCollector;
+  tc.selectedIds = tc.selectedIds.filter(id=>id!==hajiId);
+  delete tc.perHaji[hajiId];
+  render();
+}
+function toggleCollectorTrip(hajiId, tripTypeId, checked){
+  state.tripCollector.perHaji[hajiId].trips[tripTypeId] = checked;
+  render();
+}
+function toggleCollectorFOC(hajiId, checked){
+  state.tripCollector.perHaji[hajiId].foc = checked;
+  render();
+}
+function toggleTemplateTrip(tripTypeId, checked){
+  state.tripCollector.template[tripTypeId] = checked;
+  render();
+}
+function applyTripsToAll(){
+  const tc = state.tripCollector;
+  tc.selectedIds.forEach(id=>{ tc.perHaji[id].trips = {...tc.template}; });
+  render();
+}
+function markAllFOC(){
+  const tc = state.tripCollector;
+  tc.selectedIds.forEach(id=>{ tc.perHaji[id].foc = true; });
+  render();
+}
+function clearAllCollector(){
+  state.tripCollector.selectedIds = [];
+  state.tripCollector.perHaji = {};
+  render();
+}
+function collectorLineTotal(hajiId){
+  const ph = state.tripCollector.perHaji[hajiId];
+  if(!ph || ph.foc) return 0;
+  return state.tripTypes.reduce((s,t)=> s + (ph.trips[t.id] ? Number(t.price) : 0), 0);
+}
+function collectorEligibleIds(){
+  const tc = state.tripCollector;
+  return tc.selectedIds.filter(id=>{
+    const ph = tc.perHaji[id];
+    return ph && (ph.foc || Object.values(ph.trips).some(Boolean));
+  });
+}
+function collectorGrandTotal(){
+  return state.tripCollector.selectedIds.reduce((s,id)=>s+collectorLineTotal(id),0);
+}
+function tripCheckboxHtml(tripType, checked, onchangeExpr){
+  return `<label class="trip-check"><input type="checkbox" ${checked?'checked':''} onchange="${onchangeExpr}"/> ${esc(tripType.name)} <span class="mono" style="color:#8a8168;">${fmt(tripType.price)}</span></label>`;
+}
+function renderTripCollector(){
+  const tc = state.tripCollector;
+  if(!tc) return '';
+  if(!state.tripTypes.length){
+    return `
+      <div class="toolbar"><button class="ghost" onclick="closeTripCollector()">← Back to payments</button></div>
+      <div class="empty">
+        <h3>No trip types yet</h3>
+        <p>Add ziyarat trips (e.g. Hira, Taif, Jeddah, Meeqat) with prices first.</p>
+        <button class="gold" style="margin-top:10px;" onclick="openModal('tripTypes')">Manage trip types</button>
+      </div>
+    `;
+  }
+  const eligibleIds = collectorEligibleIds();
+  return `
+    <div class="toolbar">
+      <button class="ghost" onclick="closeTripCollector()">← Back to payments</button>
+      <button class="ghost" onclick="openModal('tripTypes')">Manage trip types</button>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-bottom:14px;">Find customers</h3>
+      <div class="two-col">
+        <div>
+          <label>Room</label>
+          <select id="collector-room">
+            <option value="">Select room</option>
+            ${state.rooms.map(r=>`<option value="${r.id}">${esc(r.room_number)} (${r.hotel_leg})</option>`).join('')}
+          </select>
+          <button class="ghost" style="width:100%;margin-top:8px;" onclick="addRoomToCollector()">Add Room</button>
+        </div>
+        <div>
+          <label>Individual</label>
+          <input id="collector-search" placeholder="Name, passport, or family code"/>
+          <button class="ghost" style="width:100%;margin-top:8px;" onclick="searchIndividualForCollector()">Search</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:14px;">Selected customers</h3>
+      <div class="collector-template">
+        <strong style="font-size:11px;color:#6b6252;text-transform:uppercase;letter-spacing:.05em;">Trip template</strong>
+        ${state.tripTypes.map(t=>tripCheckboxHtml(t, !!tc.template[t.id], `toggleTemplateTrip('${t.id}',this.checked)`)).join('')}
+      </div>
+      <div class="toolbar">
+        <button class="ghost" onclick="applyTripsToAll()">Apply trips to all</button>
+        <button class="ghost" onclick="markAllFOC()">Mark all FOC</button>
+        <button class="danger" onclick="clearAllCollector()">Clear All</button>
+      </div>
+      ${tc.selectedIds.length ? tc.selectedIds.map(id=>{
+        const h = hajiById(id);
+        if(!h) return '';
+        const ph = tc.perHaji[id] || {foc:false, trips:{}};
+        const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
+        return `
+          <div class="trip-row">
+            <div class="who">
+              <strong>${esc(h.full_name)}</strong>
+              <div style="font-size:11px;color:#8a8168;">${esc(h.passport_no||'—')}${room?` · Room ${esc(room.room_number)}`:''}</div>
+            </div>
+            <label class="trip-check"><input type="checkbox" ${ph.foc?'checked':''} onchange="toggleCollectorFOC('${id}',this.checked)"/> FOC</label>
+            ${state.tripTypes.map(t=>tripCheckboxHtml(t, !!ph.trips[t.id], `toggleCollectorTrip('${id}','${t.id}',this.checked)`)).join('')}
+            <span class="trip-total">${fmt(collectorLineTotal(id))}</span>
+            <button class="danger" onclick="removeFromCollector('${id}')">Remove</button>
+          </div>
+        `;
+      }).join('') : `<div class="empty">No customers selected yet — search or pick a room above.</div>`}
+    </div>
+
+    <div class="collector-footer">
+      <div>
+        <div style="font-size:12px;color:#6b6252;">Customers with at least one selected trip</div>
+        <div style="font-weight:700;">${eligibleIds.length} customer${eligibleIds.length===1?'':'s'}</div>
+        <div class="stat-value" style="font-size:22px;">${fmt(collectorGrandTotal())}</div>
+      </div>
+      <div class="collector-payment-fields">
+        <div><label>Method</label><select id="collector-method" onchange="state.tripCollector.method=this.value">
+          <option value="cash" ${tc.method==='cash'?'selected':''}>Cash</option>
+          <option value="bank_transfer" ${tc.method==='bank_transfer'?'selected':''}>Bank transfer</option>
+          <option value="other" ${tc.method==='other'?'selected':''}>Other</option>
+        </select></div>
+        <div><label>Date</label><input id="collector-date" type="date" value="${tc.paidOn}" onchange="state.tripCollector.paidOn=this.value"/></div>
+        <div><label>Reference</label><input id="collector-reference" value="${esc(tc.reference||'')}" oninput="state.tripCollector.reference=this.value" placeholder="Receipt no."/></div>
+      </div>
+      <button class="primary" style="padding:12px 24px;" onclick="saveTripPayments()">Confirm & Save Payment</button>
+    </div>
+  `;
+}
+async function saveTripPayments(){
+  const tc = state.tripCollector;
+  const eligibleIds = collectorEligibleIds();
+  if(!eligibleIds.length){ showNotice('Select at least one trip (or mark FOC) for at least one customer.', 'error'); return; }
+  for(const hajiId of eligibleIds){
+    const ph = tc.perHaji[hajiId];
+    const checkedTrips = state.tripTypes.filter(t=>ph.trips[t.id]);
+    const amount = ph.foc ? 0 : checkedTrips.reduce((s,t)=>s+Number(t.price),0);
+    const { data: paymentRow, error } = await sb.from('payments').insert({
+      haji_id: hajiId, amount,
+      method: tc.method, paid_on: tc.paidOn || new Date().toISOString().slice(0,10),
+      reference: tc.reference, notes: ph.foc ? 'FOC — trips waived' : ''
+    }).select().single();
+    if(error){ showNotice(error.message, 'error'); return; }
+    if(checkedTrips.length){
+      const items = checkedTrips.map(t=>({ payment_id: paymentRow.id, trip_type_id: t.id, trip_name: t.name, price: ph.foc?0:Number(t.price) }));
+      await sb.from('payment_trip_items').insert(items);
+    }
+  }
+  const count = eligibleIds.length;
+  state.tripCollector = null;
+  state.view = 'payments';
+  await loadGroupData();
+  showNotice(`Saved payments for ${count} customer${count===1?'':'s'}.`, 'success');
+  render();
 }
 
 // ---------- STAFF ----------
