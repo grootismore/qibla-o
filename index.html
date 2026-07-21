@@ -189,6 +189,15 @@ let state = {
   canInstall: false,
   hotels: [],
   roleSettings: [],
+  authMode: 'staff', // 'staff' | 'haji'
+  isHaji: false,
+  myHaji: null,
+  myGroup: null,
+  myPackage: null,
+  myPayments: [],
+  myPaymentTripItems: [],
+  myRoomAssignments: [],
+  myBusAssignments: [],
   tripTypes: [],
   tripCollector: null, // {selectedIds:[], perHaji:{id:{foc,trips:{tripTypeId:bool}}}, template:{trips:{}}, method, paidOn, reference, notes, roomFilter, searchQuery}
   paymentTripItems: [],
@@ -232,20 +241,29 @@ async function initAuth(){
   state.session = data.session;
   sb.auth.onAuthStateChange(async (_event, session) => {
     state.session = session;
-    if(session) { await loadMyRole(); await loadAll(); }
-    else { state.myRole = null; }
+    if(session) {
+      await loadMyRole();
+      if(state.isHaji) await loadMyHajiData(); else await loadAll();
+    } else {
+      state.myRole = null; state.isHaji = false; state.myHaji = null;
+    }
     render();
   });
   if(state.session) await loadMyRole();
   render();
-  if(state.session) await loadAll();
+  if(state.session){
+    if(state.isHaji) await loadMyHajiData(); else await loadAll();
+  }
 }
 
 async function loadMyRole(){
   const uid = state.session?.user?.id;
   if(!uid) return;
-  const { data } = await sb.from('staff').select('*').eq('id', uid).maybeSingle();
-  state.myRole = data?.role || 'agent';
+  const { data: staffRow } = await sb.from('staff').select('*').eq('id', uid).maybeSingle();
+  if(staffRow){ state.myRole = staffRow.role; state.isHaji = false; state.myHaji = null; return; }
+  const { data: hajiRow } = await sb.from('hajis').select('*').eq('auth_user_id', uid).maybeSingle();
+  if(hajiRow){ state.myRole = 'haji'; state.isHaji = true; state.myHaji = hajiRow; return; }
+  state.myRole = 'agent'; state.isHaji = false;
 }
 
 function canRole(action, role){
@@ -274,6 +292,18 @@ const NAV_ITEM_DEFS = [
 ];
 function permittedNavItems(role){ return NAV_ITEM_DEFS.filter(d=>d.permitted(role)); }
 
+const HAJI_SECTION_DEFS = [
+  { key:'balance', label:'Balance & Package' },
+  { key:'payments', label:'Payment History' },
+  { key:'room', label:'Room Assignment' },
+  { key:'bus', label:'Bus Assignment' },
+];
+function hajiVisibleSections(){
+  const rs = state.roleSettings.find(r=>r.role==='haji');
+  if(!rs || !rs.visible_views) return HAJI_SECTION_DEFS.map(d=>d.key);
+  return rs.visible_views;
+}
+
 async function signIn(email, password){
   const { error } = await sb.auth.signInWithPassword({ email, password });
   if(error){ showNotice(error.message, 'error'); return; }
@@ -286,9 +316,43 @@ async function signUp(email, password, fullName){
   }
   showNotice('Account created. If email confirmation is on, check your inbox — otherwise you are signed in.', 'success');
 }
+function hajiLoginEmail(passportNo){
+  return (passportNo||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'') + '@hajis.rihla.local';
+}
+async function signInAsHaji(passportNo, phone){
+  if(!passportNo || !phone){ showNotice('Enter your passport number and phone number.', 'error'); return; }
+  const { error } = await sb.auth.signInWithPassword({ email: hajiLoginEmail(passportNo), password: phone });
+  if(error){ showNotice('Passport number or phone number is incorrect.', 'error'); return; }
+}
 async function signOut(){ await sb.auth.signOut(); }
 
 // ---------- DATA LOADING ----------
+async function loadMyHajiData(){
+  const h = state.myHaji;
+  if(!h) return;
+  const [{data:roleSettings}, {data:group}, {data:pkg}, {data:payments}, {data:roomAssign}, {data:busAssign}] = await Promise.all([
+    sb.from('role_settings').select('*'),
+    sb.from('groups').select('*').eq('id', h.group_id).maybeSingle(),
+    h.package_id ? sb.from('packages').select('*').eq('id', h.package_id).maybeSingle() : Promise.resolve({data:null}),
+    sb.from('payments').select('*').eq('haji_id', h.id).order('paid_on', {ascending:false}),
+    sb.from('room_assignments').select('*, rooms(*)').eq('haji_id', h.id),
+    sb.from('bus_assignments').select('*, buses(*)').eq('haji_id', h.id),
+  ]);
+  state.roleSettings = roleSettings || [];
+  state.myGroup = group || null;
+  state.myPackage = pkg || null;
+  state.myPayments = payments || [];
+  state.myRoomAssignments = roomAssign || [];
+  state.myBusAssignments = busAssign || [];
+  const paymentIds = state.myPayments.map(p=>p.id);
+  if(paymentIds.length){
+    const { data: items } = await sb.from('payment_trip_items').select('*').in('payment_id', paymentIds);
+    state.myPaymentTripItems = items || [];
+  } else {
+    state.myPaymentTripItems = [];
+  }
+}
+
 let appliedDefaultView = false;
 async function loadAll(){
   const { data: groups } = await sb.from('groups').select('*').order('departure_date', {ascending:true});
@@ -405,6 +469,7 @@ function closeNotice(){ document.getElementById('notice-root').innerHTML = ''; }
 // ---------- RENDER ----------
 function render(){
   if(!state.session){ renderAuth(); return; }
+  if(state.isHaji){ renderHajiDashboard(); return; }
   const navItems = getNavItems();
   root.innerHTML = `
     <div id="app" class="${state.mobileNavOpen?'nav-open':''}">
@@ -473,20 +538,107 @@ function renderAuth(){
       <div class="auth-card">
         <h1>Rihla</h1>
         <div class="tagline">Umrah group operations</div>
-        <div class="field"><label>Full name (for new staff account)</label><input id="auth-name" placeholder="Your name"/></div>
-        <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@example.com"/></div>
-        <div class="field"><label>Password</label><input id="auth-pass" type="password" placeholder="••••••••"/></div>
-        <div style="display:flex;gap:8px;margin-top:16px;">
-          <button class="primary" style="flex:1" onclick="doSignIn()">Sign in</button>
-          <button class="gold" style="flex:1" onclick="doSignUp()">Create staff account</button>
+        <div style="display:flex;gap:8px;margin:14px 0 18px;">
+          <button class="${state.authMode==='staff'?'primary':'ghost'}" style="flex:1" onclick="setAuthMode('staff')">Staff</button>
+          <button class="${state.authMode==='haji'?'primary':'ghost'}" style="flex:1" onclick="setAuthMode('haji')">Pilgrim</button>
         </div>
+        ${state.authMode==='staff' ? `
+          <div class="field"><label>Full name (for new staff account)</label><input id="auth-name" placeholder="Your name"/></div>
+          <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@example.com"/></div>
+          <div class="field"><label>Password</label><input id="auth-pass" type="password" placeholder="••••••••"/></div>
+          <div style="display:flex;gap:8px;margin-top:16px;">
+            <button class="primary" style="flex:1" onclick="doSignIn()">Sign in</button>
+            <button class="gold" style="flex:1" onclick="doSignUp()">Create staff account</button>
+          </div>
+        ` : `
+          <div class="field"><label>Passport number</label><input id="haji-passport" placeholder="e.g. A1234567"/></div>
+          <div class="field"><label>Phone number</label><input id="haji-phone" placeholder="Your registered phone number"/></div>
+          <button class="primary" style="width:100%;margin-top:6px;" onclick="doHajiSignIn()">Sign in</button>
+          <p style="font-size:11px;color:#8a8168;margin-top:12px;">Don't have login details? Ask your group coordinator.</p>
+        `}
         ${state.canInstall ? `<button class="ghost install-btn" onclick="installApp()">⭳ Install app</button>` : ''}
       </div>
     </div>
   `;
 }
+function setAuthMode(mode){ state.authMode = mode; render(); }
 function doSignIn(){ signIn(document.getElementById('auth-email').value, document.getElementById('auth-pass').value); }
 function doSignUp(){ signUp(document.getElementById('auth-email').value, document.getElementById('auth-pass').value, document.getElementById('auth-name').value); }
+function doHajiSignIn(){ signInAsHaji(document.getElementById('haji-passport').value, document.getElementById('haji-phone').value); }
+
+// ---------- HAJI (PILGRIM) DASHBOARD ----------
+function renderHajiDashboard(){
+  const h = state.myHaji;
+  const g = state.myGroup;
+  const pkg = state.myPackage;
+  const due = pkg ? Number(pkg.price) : 0;
+  const paid = state.myPayments.reduce((s,p)=>s+Number(p.amount),0);
+  const balance = due - paid;
+  const sections = hajiVisibleSections();
+
+  root.innerHTML = `
+    <div class="auth-wrap" style="align-items:flex-start;padding:28px 14px;min-height:100vh;">
+      <div style="width:100%;max-width:520px;margin:0 auto;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
+          <div>
+            <h1 style="color:var(--sand);font-size:24px;">Rihla</h1>
+            <div style="color:var(--gold-soft);font-size:12px;font-style:italic;">Welcome, ${esc(h.full_name)}</div>
+          </div>
+          <button class="ghost" style="color:var(--sand);border-color:rgba(242,236,221,.35);" onclick="signOut()">Sign out</button>
+        </div>
+
+        <div class="card" style="margin-bottom:14px;">
+          <h3>${esc(g?.name||'Your Umrah group')}</h3>
+          <p style="color:#6b6252;font-size:13px;margin-top:4px;">${g?.departure_date||'—'} to ${g?.return_date||'—'} · Mecca: ${esc(g?.mecca_hotel||'—')} · Madinah: ${esc(g?.madinah_hotel||'—')}</p>
+        </div>
+
+        ${sections.includes('balance') ? `
+          <div class="card" style="margin-bottom:14px;">
+            <div class="stat-label">Package</div>
+            <div style="margin-bottom:10px;">${pkg?esc(pkg.name):'—'}</div>
+            <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px;">
+              <div><div class="stat-label">Total due</div><div class="stat-value" style="font-size:20px;">${fmt(due)}</div></div>
+              <div><div class="stat-label">Balance</div><div class="stat-value" style="font-size:20px;color:${balance<=0?'var(--ok)':'var(--danger)'}">${fmt(balance)}</div></div>
+            </div>
+          </div>
+        ` : ''}
+
+        ${sections.includes('payments') ? `
+          <div class="card table-wrap" style="margin-bottom:14px;">
+            <h3 style="margin-bottom:10px;">Payment history</h3>
+            <table>
+              <thead><tr><th>Date</th><th>Amount</th><th>Method</th></tr></thead>
+              <tbody>
+                ${state.myPayments.map(p=>{
+                  const trips = state.myPaymentTripItems.filter(t=>t.payment_id===p.id);
+                  return `<tr>
+                    <td>${p.paid_on}${trips.length?`<div style="font-size:11px;color:#8a8168;">${trips.map(t=>esc(t.trip_name)).join(', ')}</div>`:''}</td>
+                    <td>${fmt(p.amount)}</td>
+                    <td style="text-transform:capitalize;">${p.method.replace('_',' ')}</td>
+                  </tr>`;
+                }).join('') || `<tr><td colspan="3" class="empty">No payments recorded yet.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        ` : ''}
+
+        ${sections.includes('room') ? `
+          <div class="card" style="margin-bottom:14px;">
+            <h3 style="margin-bottom:6px;">Room assignment</h3>
+            ${state.myRoomAssignments.length ? state.myRoomAssignments.map(a=>`<p>Room ${esc(a.rooms?.room_number||'—')} · <span style="text-transform:capitalize;">${a.rooms?.hotel_leg||''}</span></p>`).join('') : `<p style="color:#8a8168;">Not assigned yet.</p>`}
+          </div>
+        ` : ''}
+
+        ${sections.includes('bus') ? `
+          <div class="card" style="margin-bottom:14px;">
+            <h3 style="margin-bottom:6px;">Bus assignment</h3>
+            ${state.myBusAssignments.length ? state.myBusAssignments.map(a=>`<p>Bus ${esc(a.buses?.bus_number||'—')} · ${(a.buses?.leg||'').replace('_',' ')}</p>`).join('') : `<p style="color:#8a8168;">Not assigned yet.</p>`}
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
 
 // ---------- DASHBOARD ----------
 function renderDashboard(){
@@ -705,8 +857,16 @@ async function saveHaji(e, id){
     package_id: f.package_id.value || null,
     notes: f.notes.value
   };
+  let hajiId = id;
   if(id) await sb.from('hajis').update(payload).eq('id', id);
-  else await sb.from('hajis').insert(payload);
+  else {
+    const { data } = await sb.from('hajis').insert(payload).select().single();
+    hajiId = data?.id;
+  }
+  if(hajiId && payload.passport_no?.trim() && payload.phone?.trim()){
+    const { error: provErr } = await sb.rpc('provision_haji_login', { p_haji_id: hajiId });
+    if(provErr) showNotice(`Saved, but pilgrim login setup failed: ${provErr.message}`, 'error');
+  }
   closeModal(); await loadGroupData(); render();
 }
 
@@ -1330,7 +1490,25 @@ function renderSettings(){
         </div>
       `;
     }).join('')}
+    <div class="card" style="margin-bottom:16px;max-width:520px;">
+      <h3 style="margin-bottom:6px;">Haji (pilgrim) dashboard</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:10px;">Choose which sections pilgrims can see when they sign in with their passport number and phone.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;">
+        ${HAJI_SECTION_DEFS.map(d=>`
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;">
+            <input type="checkbox" style="width:auto;" ${hajiVisibleSections().includes(d.key)?'checked':''} onchange="toggleHajiSection('${d.key}',this.checked)"/> ${esc(d.label)}
+          </label>
+        `).join('')}
+      </div>
+    </div>
   `;
+}
+async function toggleHajiSection(key, checked){
+  const rs = state.roleSettings.find(r=>r.role==='haji');
+  let visible = rs?.visible_views ? [...rs.visible_views] : HAJI_SECTION_DEFS.map(d=>d.key);
+  if(checked){ if(!visible.includes(key)) visible.push(key); }
+  else { visible = visible.filter(k=>k!==key); }
+  await upsertRoleSettings('haji', { visible_views: visible });
 }
 async function upsertRoleSettings(role, patch){
   const existing = state.roleSettings.find(r=>r.role===role);
