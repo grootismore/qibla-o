@@ -188,6 +188,7 @@ let state = {
   mobileNavOpen: false,
   canInstall: false,
   hotels: [],
+  roleSettings: [],
   tripTypes: [],
   tripCollector: null, // {selectedIds:[], perHaji:{id:{foc,trips:{tripTypeId:bool}}}, template:{trips:{}}, method, paidOn, reference, notes, roomFilter, searchQuery}
   paymentTripItems: [],
@@ -247,8 +248,7 @@ async function loadMyRole(){
   state.myRole = data?.role || 'agent';
 }
 
-function can(action){
-  const r = state.myRole;
+function canRole(action, role){
   const rules = {
     manageGroups: ['admin'],
     managePackages: ['admin','accountant'],
@@ -258,8 +258,21 @@ function can(action){
     managePayments: ['admin','accountant'],
     manageStaff: ['admin'],
   };
-  return (rules[action]||[]).includes(r);
+  return (rules[action]||[]).includes(role);
 }
+function can(action){ return canRole(action, state.myRole); }
+
+const NAV_ITEM_DEFS = [
+  { key:'dashboard', label:'Dashboard', activeViews:['dashboard'], onclick:"setView('dashboard')", permitted: ()=>true },
+  { key:'groups', label:'Groups', activeViews:['groups'], onclick:"setView('groups')", permitted: (role)=>role==='admin' },
+  { key:'hajis', label:'Hajis', activeViews:['hajis'], onclick:"setView('hajis')", permitted: (role)=>canRole('manageHajis',role)||role==='accountant' },
+  { key:'rooms', label:'Rooms', activeViews:['rooms'], onclick:"setView('rooms')", permitted: (role)=>canRole('manageRooms',role) },
+  { key:'buses', label:'Buses', activeViews:['buses'], onclick:"setView('buses')", permitted: (role)=>canRole('manageBuses',role) },
+  { key:'payments', label:'Payments', activeViews:['payments'], onclick:"setView('payments')", permitted: (role)=>canRole('managePayments',role)||role==='admin' },
+  { key:'tripPayments', label:'Trip Payments', activeViews:['tripCollector','tripSummary','tripDateReport'], onclick:"openTripCollector()", permitted: (role)=>canRole('managePayments',role)||role==='admin' },
+  { key:'staff', label:'Staff', activeViews:['staff'], onclick:"setView('staff')", permitted: (role)=>canRole('manageStaff',role) },
+];
+function permittedNavItems(role){ return NAV_ITEM_DEFS.filter(d=>d.permitted(role)); }
 
 async function signIn(email, password){
   const { error } = await sb.auth.signInWithPassword({ email, password });
@@ -276,12 +289,21 @@ async function signUp(email, password, fullName){
 async function signOut(){ await sb.auth.signOut(); }
 
 // ---------- DATA LOADING ----------
+let appliedDefaultView = false;
 async function loadAll(){
   const { data: groups } = await sb.from('groups').select('*').order('departure_date', {ascending:true});
   state.groups = groups || [];
   if(!state.activeGroupId && state.groups.length) state.activeGroupId = state.groups[0].id;
   const { data: hotels } = await sb.from('hotels').select('*').order('name');
   state.hotels = hotels || [];
+  const { data: roleSettings } = await sb.from('role_settings').select('*');
+  state.roleSettings = roleSettings || [];
+  if(!appliedDefaultView){
+    appliedDefaultView = true;
+    const rs = state.roleSettings.find(r=>r.role===state.myRole);
+    const def = rs?.default_view && NAV_ITEM_DEFS.find(d=>d.key===rs.default_view && d.permitted(state.myRole));
+    if(def) state.view = def.activeViews[0];
+  }
   await loadGroupData();
   render();
 }
@@ -426,19 +448,17 @@ function render(){
   else if(state.view==='tripSummary') content.innerHTML = renderTripSummary();
   else if(state.view==='tripDateReport') content.innerHTML = renderTripDateReport();
   else if(state.view==='staff') { content.innerHTML = renderStaff(); loadStaffList(); }
+  else if(state.view==='settings') content.innerHTML = renderSettings();
 }
 
 function getNavItems(){
-  const items = [];
-  items.push({ label:'Dashboard', activeViews:['dashboard'], onclick:"setView('dashboard')" });
-  if(state.myRole==='admin') items.push({ label:'Groups', activeViews:['groups'], onclick:"setView('groups')" });
-  if(can('manageHajis')||state.myRole==='accountant') items.push({ label:'Hajis', activeViews:['hajis'], onclick:"setView('hajis')" });
-  if(can('manageRooms')) items.push({ label:'Rooms', activeViews:['rooms'], onclick:"setView('rooms')" });
-  if(can('manageBuses')) items.push({ label:'Buses', activeViews:['buses'], onclick:"setView('buses')" });
-  if(can('managePayments')||state.myRole==='admin') items.push({ label:'Payments', activeViews:['payments'], onclick:"setView('payments')" });
-  if(can('managePayments')||state.myRole==='admin') items.push({ label:'Trip Payments', activeViews:['tripCollector','tripSummary','tripDateReport'], onclick:"openTripCollector()" });
-  if(can('manageStaff')) items.push({ label:'Staff', activeViews:['staff'], onclick:"setView('staff')" });
-  return items;
+  const permitted = permittedNavItems(state.myRole);
+  const rs = state.roleSettings.find(r=>r.role===state.myRole);
+  const filtered = (!rs || !rs.visible_views)
+    ? permitted
+    : permitted.filter(d=>d.key==='dashboard' || rs.visible_views.includes(d.key));
+  if(state.myRole==='admin') filtered.push({ key:'settings', label:'Settings', activeViews:['settings'], onclick:"setView('settings')" });
+  return filtered;
 }
 function navItem(view, label){
   return `<div class="nav-item ${state.view===view?'active':''}" onclick="setView('${view}')">${label}</div>`;
@@ -1280,6 +1300,57 @@ function renderStaff(){
 async function updateStaffRole(id, role){
   await sb.from('staff').update({role}).eq('id', id);
   await loadStaffList();
+}
+
+// ---------- SETTINGS ----------
+function renderSettings(){
+  return `
+    <h2 style="margin-bottom:16px;">Settings</h2>
+    ${['admin','agent','accountant'].map(role=>{
+      const permitted = permittedNavItems(role);
+      const rs = state.roleSettings.find(r=>r.role===role) || {};
+      const visible = rs.visible_views || permitted.map(d=>d.key);
+      return `
+        <div class="card" style="margin-bottom:16px;max-width:520px;">
+          <h3 style="text-transform:capitalize;margin-bottom:12px;">${esc(role)}</h3>
+          <div class="field">
+            <label>Default landing page</label>
+            <select onchange="updateRoleDefaultView('${role}', this.value)">
+              ${permitted.map(d=>`<option value="${d.key}" ${(rs.default_view||'dashboard')===d.key?'selected':''}>${esc(d.label)}</option>`).join('')}
+            </select>
+          </div>
+          <label>Visible menu items</label>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
+            ${permitted.map(d=>`
+              <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;">
+                <input type="checkbox" style="width:auto;" ${visible.includes(d.key)?'checked':''} ${d.key==='dashboard'?'disabled':''} onchange="toggleRoleVisibleItem('${role}','${d.key}',this.checked)"/> ${esc(d.label)}
+              </label>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+async function upsertRoleSettings(role, patch){
+  const existing = state.roleSettings.find(r=>r.role===role);
+  const payload = { role, default_view: existing?.default_view||'dashboard', visible_views: existing?.visible_views||null, ...patch };
+  const { data, error } = await sb.from('role_settings').upsert(payload, {onConflict:'role'}).select().single();
+  if(error){ showNotice(error.message, 'error'); return; }
+  const idx = state.roleSettings.findIndex(r=>r.role===role);
+  if(idx>=0) state.roleSettings[idx] = data; else state.roleSettings.push(data);
+  render();
+}
+async function updateRoleDefaultView(role, view){
+  await upsertRoleSettings(role, { default_view: view });
+}
+async function toggleRoleVisibleItem(role, key, checked){
+  const permitted = permittedNavItems(role).map(d=>d.key);
+  const rs = state.roleSettings.find(r=>r.role===role);
+  let visible = rs?.visible_views ? [...rs.visible_views] : [...permitted];
+  if(checked){ if(!visible.includes(key)) visible.push(key); }
+  else { visible = visible.filter(k=>k!==key); }
+  await upsertRoleSettings(role, { visible_views: visible });
 }
 
 // ---------- MODALS ----------
