@@ -189,7 +189,7 @@ let state = {
   canInstall: false,
   hotels: [],
   roleSettings: [],
-  authMode: 'staff', // 'staff' | 'haji'
+  authMode: (function(){ try{ return localStorage.getItem('rihla_auth_mode')||'staff'; }catch(e){ return 'staff'; } })(), // 'staff' | 'haji'
   isHaji: false,
   myHaji: null,
   myGroup: null,
@@ -267,6 +267,7 @@ async function loadMyRole(){
 }
 
 function canRole(action, role){
+  if(role==='super_admin') return true; // super admins (system owners) can do everything staff can
   const rules = {
     manageGroups: ['admin'],
     managePackages: ['admin','accountant'],
@@ -282,7 +283,7 @@ function can(action){ return canRole(action, state.myRole); }
 
 const NAV_ITEM_DEFS = [
   { key:'dashboard', label:'Dashboard', activeViews:['dashboard'], onclick:"setView('dashboard')", permitted: ()=>true },
-  { key:'groups', label:'Groups', activeViews:['groups'], onclick:"setView('groups')", permitted: (role)=>role==='admin' },
+  { key:'groups', label:'Groups', activeViews:['groups'], onclick:"setView('groups')", permitted: (role)=>role==='admin'||role==='super_admin' },
   { key:'hajis', label:'Hajis', activeViews:['hajis'], onclick:"setView('hajis')", permitted: (role)=>canRole('manageHajis',role)||role==='accountant' },
   { key:'rooms', label:'Rooms', activeViews:['rooms'], onclick:"setView('rooms')", permitted: (role)=>canRole('manageRooms',role) },
   { key:'buses', label:'Buses', activeViews:['buses'], onclick:"setView('buses')", permitted: (role)=>canRole('manageBuses',role) },
@@ -305,16 +306,34 @@ function hajiVisibleSections(){
 }
 
 async function signIn(email, password){
+  if(!email?.trim() || !password){
+    showNotice('Enter your email and password.', 'error');
+    return;
+  }
   const { error } = await sb.auth.signInWithPassword({ email, password });
   if(error){ showNotice(error.message, 'error'); return; }
 }
 async function signUp(email, password, fullName){
+  if(!fullName?.trim() || !email?.trim() || !password){
+    showNotice('Fill in your name, email, and password to create an account.', 'error');
+    return;
+  }
   const { data, error } = await sb.auth.signUp({ email, password });
   if(error){ showNotice(error.message, 'error'); return; }
-  if(data.user){
-    await sb.from('staff').insert({ id: data.user.id, full_name: fullName, role: 'admin' });
+  if(!data.session){
+    showNotice('Account created — check your email to confirm it, then sign in.', 'success');
+    return;
   }
-  showNotice('Account created. If email confirmation is on, check your inbox — otherwise you are signed in.', 'success');
+  const { count } = await sb.from('staff').select('*', { count:'exact', head:true });
+  const role = count === 0 ? 'super_admin' : 'agent';
+  const { error: staffErr } = await sb.from('staff').insert({ id: data.user.id, full_name: fullName, role });
+  if(staffErr){
+    showNotice(`Your login was created, but we couldn't set up your access (${staffErr.message}). Ask an existing admin to add you under Staff.`, 'error');
+    return;
+  }
+  showNotice(role==='super_admin'
+    ? "Account created — you're the first user, so you've been made Super Admin (system owner)."
+    : "Account created with basic access. An admin can upgrade your role in Staff once you're set up.", 'success');
 }
 function hajiLoginEmail(passportNo){
   return (passportNo||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'') + '@hajis.rihla.local';
@@ -325,6 +344,13 @@ async function signInAsHaji(passportNo, phone){
   if(error){ showNotice('Passport number or phone number is incorrect.', 'error'); return; }
 }
 async function signOut(){ await sb.auth.signOut(); }
+async function doForgotPassword(){
+  const email = document.getElementById('auth-email')?.value.trim();
+  if(!email){ showNotice('Enter your email above first, then tap "Forgot password?".', 'error'); return; }
+  const { error } = await sb.auth.resetPasswordForEmail(email);
+  if(error){ showNotice(error.message, 'error'); return; }
+  showNotice('Password reset email sent — check your inbox.', 'success');
+}
 
 // ---------- DATA LOADING ----------
 async function loadMyHajiData(){
@@ -518,11 +544,14 @@ function render(){
 
 function getNavItems(){
   const permitted = permittedNavItems(state.myRole);
+  // super admins (system owners) always see everything, unrestricted by role_settings
+  if(state.myRole==='super_admin'){
+    return [...permitted, { key:'settings', label:'Settings', activeViews:['settings'], onclick:"setView('settings')" }];
+  }
   const rs = state.roleSettings.find(r=>r.role===state.myRole);
   const filtered = (!rs || !rs.visible_views)
     ? permitted
     : permitted.filter(d=>d.key==='dashboard' || rs.visible_views.includes(d.key));
-  if(state.myRole==='admin') filtered.push({ key:'settings', label:'Settings', activeViews:['settings'], onclick:"setView('settings')" });
   return filtered;
 }
 function navItem(view, label){
@@ -538,22 +567,25 @@ function renderAuth(){
       <div class="auth-card">
         <h1>Rihla</h1>
         <div class="tagline">Umrah group operations</div>
-        <div style="display:flex;gap:8px;margin:14px 0 18px;">
+        <div style="display:flex;gap:8px;margin:14px 0 6px;">
           <button class="${state.authMode==='staff'?'primary':'ghost'}" style="flex:1" onclick="setAuthMode('staff')">Staff</button>
           <button class="${state.authMode==='haji'?'primary':'ghost'}" style="flex:1" onclick="setAuthMode('haji')">Pilgrim</button>
         </div>
         ${state.authMode==='staff' ? `
-          <div class="field"><label>Full name (for new staff account)</label><input id="auth-name" placeholder="Your name"/></div>
-          <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@example.com"/></div>
-          <div class="field"><label>Password</label><input id="auth-pass" type="password" placeholder="••••••••"/></div>
+          <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Sign in if you already have an account. New here? Create one below — the very first account on Rihla becomes the system owner; everyone after that starts with basic access until an admin sets their role.</p>
+          <div class="field"><label>Full name (for new staff account)</label><input id="auth-name" placeholder="Your name" autocomplete="name"/></div>
+          <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" autofocus/></div>
+          <div class="field"><label>Password</label><input id="auth-pass" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
           <div style="display:flex;gap:8px;margin-top:16px;">
-            <button class="primary" style="flex:1" onclick="doSignIn()">Sign in</button>
-            <button class="gold" style="flex:1" onclick="doSignUp()">Create staff account</button>
+            <button id="staff-signin-btn" class="primary" style="flex:1" onclick="doSignIn()">Sign in</button>
+            <button id="staff-signup-btn" class="gold" style="flex:1" onclick="doSignUp()">Create staff account</button>
           </div>
+          <button class="link-btn" style="margin-top:12px;" onclick="doForgotPassword()">Forgot password?</button>
         ` : `
-          <div class="field"><label>Passport number</label><input id="haji-passport" placeholder="e.g. A1234567"/></div>
-          <div class="field"><label>Phone number</label><input id="haji-phone" placeholder="Your registered phone number"/></div>
-          <button class="primary" style="width:100%;margin-top:6px;" onclick="doHajiSignIn()">Sign in</button>
+          <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Sign in with the passport number and phone number your group coordinator has on file for you.</p>
+          <div class="field"><label>Passport number</label><input id="haji-passport" placeholder="e.g. A1234567" autocomplete="off" autofocus/></div>
+          <div class="field"><label>Phone number</label><input id="haji-phone" placeholder="Your registered phone number" autocomplete="tel"/></div>
+          <button id="haji-signin-btn" class="primary" style="width:100%;margin-top:6px;" onclick="doHajiSignIn()">Sign in</button>
           <p style="font-size:11px;color:#8a8168;margin-top:12px;">Don't have login details? Ask your group coordinator.</p>
         `}
         ${state.canInstall ? `<button class="ghost install-btn" onclick="installApp()">⭳ Install app</button>` : ''}
@@ -561,10 +593,30 @@ function renderAuth(){
     </div>
   `;
 }
-function setAuthMode(mode){ state.authMode = mode; render(); }
-function doSignIn(){ signIn(document.getElementById('auth-email').value, document.getElementById('auth-pass').value); }
-function doSignUp(){ signUp(document.getElementById('auth-email').value, document.getElementById('auth-pass').value, document.getElementById('auth-name').value); }
-function doHajiSignIn(){ signInAsHaji(document.getElementById('haji-passport').value, document.getElementById('haji-phone').value); }
+function setAuthMode(mode){
+  state.authMode = mode;
+  try{ localStorage.setItem('rihla_auth_mode', mode); }catch(e){}
+  render();
+}
+async function withBusyButton(btnId, busyLabel, fn){
+  const btn = document.getElementById(btnId);
+  const originalLabel = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = busyLabel; }
+  try{ await fn(); }
+  finally{ if(btn){ btn.disabled = false; btn.textContent = originalLabel; } }
+}
+function doSignIn(){
+  withBusyButton('staff-signin-btn', 'Signing in…', () =>
+    signIn(document.getElementById('auth-email').value, document.getElementById('auth-pass').value));
+}
+function doSignUp(){
+  withBusyButton('staff-signup-btn', 'Creating…', () =>
+    signUp(document.getElementById('auth-email').value, document.getElementById('auth-pass').value, document.getElementById('auth-name').value));
+}
+function doHajiSignIn(){
+  withBusyButton('haji-signin-btn', 'Signing in…', () =>
+    signInAsHaji(document.getElementById('haji-passport').value, document.getElementById('haji-phone').value));
+}
 
 // ---------- HAJI (PILGRIM) DASHBOARD ----------
 function renderHajiDashboard(){
@@ -1440,30 +1492,41 @@ function renderStaff(){
       <table>
         <thead><tr><th>Name</th><th>Role</th></tr></thead>
         <tbody>
-          ${state.staffList.map(s=>`
+          ${state.staffList.map(s=>{
+            const isSelf = s.id===state.session.user.id;
+            const targetIsProtected = s.role==='admin' || s.role==='super_admin';
+            const canEdit = state.myRole==='super_admin' || (state.myRole==='admin' && !targetIsProtected);
+            const locked = isSelf || !canEdit;
+            const options = (state.myRole==='super_admin' || locked)
+              ? [['super_admin','Super Admin'],['admin','Admin'],['agent','Agent (hajis/rooms/buses)'],['accountant','Accountant (payments)']]
+              : [['agent','Agent (hajis/rooms/buses)'],['accountant','Accountant (payments)']];
+            return `
             <tr>
-              <td>${esc(s.full_name||'—')} ${s.id===state.session.user.id?'<span class="pill ok">You</span>':''}</td>
+              <td>${esc(s.full_name||'—')} ${isSelf?'<span class="pill ok">You</span>':''} ${s.role==='super_admin'?'<span class="pill warn">Super Admin</span>':''}</td>
               <td>
-                <select onchange="updateStaffRole('${s.id}', this.value)" ${s.id===state.session.user.id?'disabled':''}>
-                  <option value="admin" ${s.role==='admin'?'selected':''}>Admin</option>
-                  <option value="agent" ${s.role==='agent'?'selected':''}>Agent (hajis/rooms/buses)</option>
-                  <option value="accountant" ${s.role==='accountant'?'selected':''}>Accountant (payments)</option>
+                <select onchange="updateStaffRole('${s.id}', this.value)" ${locked?'disabled':''}>
+                  ${options.map(([val,label])=>`<option value="${val}" ${s.role===val?'selected':''}>${label}</option>`).join('')}
                 </select>
+                ${(!isSelf && !canEdit) ? '<div style="font-size:11px;color:#8a8168;margin-top:4px;">Only a super admin can change this.</div>' : ''}
               </td>
             </tr>
-          `).join('') || `<tr><td colspan="2" class="empty">No staff accounts yet.</td></tr>`}
+          `;}).join('') || `<tr><td colspan="2" class="empty">No staff accounts yet.</td></tr>`}
         </tbody>
       </table>
     </div>
   `;
 }
 async function updateStaffRole(id, role){
-  await sb.from('staff').update({role}).eq('id', id);
+  const { error } = await sb.from('staff').update({role}).eq('id', id);
+  if(error){ showNotice(error.message, 'error'); }
   await loadStaffList();
 }
 
 // ---------- SETTINGS ----------
 function renderSettings(){
+  if(state.myRole!=='super_admin'){
+    return `<div class="empty"><h3>Not authorized</h3><p>Only super admins can access Settings.</p></div>`;
+  }
   return `
     <h2 style="margin-bottom:16px;">Settings</h2>
     ${['admin','agent','accountant'].map(role=>{
