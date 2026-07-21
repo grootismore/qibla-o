@@ -86,6 +86,7 @@
 </head>
 <body>
 <div id="root"></div>
+<div id="notice-root"></div>
 
 <script>
 const SUPABASE_URL = "https://wbsknbdoefmzkwidmoqn.supabase.co";
@@ -152,15 +153,15 @@ function can(action){
 
 async function signIn(email, password){
   const { error } = await sb.auth.signInWithPassword({ email, password });
-  if(error){ alert(error.message); return; }
+  if(error){ showNotice(error.message, 'error'); return; }
 }
 async function signUp(email, password, fullName){
   const { data, error } = await sb.auth.signUp({ email, password });
-  if(error){ alert(error.message); return; }
+  if(error){ showNotice(error.message, 'error'); return; }
   if(data.user){
     await sb.from('staff').insert({ id: data.user.id, full_name: fullName, role: 'admin' });
   }
-  alert('Account created. If email confirmation is on, check your inbox — otherwise you are signed in.');
+  showNotice('Account created. If email confirmation is on, check your inbox — otherwise you are signed in.', 'success');
 }
 async function signOut(){ await sb.auth.signOut(); }
 
@@ -221,6 +222,24 @@ function busOccupants(busId){ return state.busAssignments.filter(a=>a.bus_id===b
 
 function openModal(type, data){ state.modal = {type, data: data||{}}; render(); }
 function closeModal(){ state.modal = null; render(); }
+
+// ---------- NOTICE (replaces native alert()) ----------
+function showNotice(message, kind){
+  const color = kind==='error' ? 'var(--danger)' : (kind==='success' ? 'var(--ok)' : 'var(--teal)');
+  document.getElementById('notice-root').innerHTML = `
+    <div class="modal-bg" onclick="if(event.target===this)closeNotice()">
+      <div class="modal" style="width:360px;">
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:16px;">
+          <div style="width:8px;height:8px;border-radius:50%;background:${color};margin-top:7px;flex-shrink:0;"></div>
+          <div style="font-size:14px;line-height:1.5;">${esc(message)}</div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;">
+          <button class="primary" onclick="closeNotice()">OK</button>
+        </div>
+      </div>
+    </div>`;
+}
+function closeNotice(){ document.getElementById('notice-root').innerHTML = ''; }
 
 // ---------- RENDER ----------
 function render(){
