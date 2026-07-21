@@ -166,6 +166,9 @@ let state = {
   modal: null, // {type, data}
   mobileNavOpen: false,
   canInstall: false,
+  hotels: [],
+  tripTypes: [],
+  tripCollector: null, // {selectedIds:[], perHaji:{id:{foc,trips:{tripTypeId:bool}}}, template:{trips:{}}, method, paidOn, reference, notes, roomFilter, searchQuery}
 };
 
 // ---------- PWA ----------
@@ -253,23 +256,30 @@ async function loadAll(){
   const { data: groups } = await sb.from('groups').select('*').order('departure_date', {ascending:true});
   state.groups = groups || [];
   if(!state.activeGroupId && state.groups.length) state.activeGroupId = state.groups[0].id;
+  const { data: hotels } = await sb.from('hotels').select('*').order('name');
+  state.hotels = hotels || [];
   await loadGroupData();
   render();
 }
 
+function hotelsForLeg(leg){ return state.hotels.filter(h=>h.leg===leg); }
+function defaultHotelName(leg){ return state.hotels.find(h=>h.leg===leg && h.is_default)?.name || ''; }
+
 async function loadGroupData(){
   const gid = state.activeGroupId;
-  if(!gid){ state.packages=[]; state.hajis=[]; state.rooms=[]; state.roomAssignments=[]; state.buses=[]; state.busAssignments=[]; state.payments=[]; return; }
-  const [{data:packages},{data:hajis},{data:rooms},{data:buses}] = await Promise.all([
+  if(!gid){ state.packages=[]; state.hajis=[]; state.rooms=[]; state.roomAssignments=[]; state.buses=[]; state.busAssignments=[]; state.payments=[]; state.tripTypes=[]; return; }
+  const [{data:packages},{data:hajis},{data:rooms},{data:buses},{data:tripTypes}] = await Promise.all([
     sb.from('packages').select('*').eq('group_id', gid),
     sb.from('hajis').select('*').eq('group_id', gid).order('full_name'),
     sb.from('rooms').select('*').eq('group_id', gid).order('room_number'),
     sb.from('buses').select('*').eq('group_id', gid).order('bus_number'),
+    sb.from('trip_types').select('*').eq('group_id', gid).order('name'),
   ]);
   state.packages = packages || [];
   state.hajis = hajis || [];
   state.rooms = rooms || [];
   state.buses = buses || [];
+  state.tripTypes = tripTypes || [];
 
   const hajiIds = state.hajis.map(h=>h.id);
   if(hajiIds.length){
@@ -437,7 +447,8 @@ function renderDashboard(){
 function renderGroups(){
   return `
     <div class="toolbar">
-      ${can('manageGroups') ? `<button class="primary" onclick="openModal('group')">+ New group</button>` : ''}
+      ${can('manageGroups') ? `<button class="primary" onclick="openModal('group')">+ New group</button>
+      <button class="ghost" onclick="openModal('hotels')">Manage hotels</button>` : ''}
     </div>
     <div class="card table-wrap">
       <table>
@@ -460,12 +471,70 @@ function renderGroups(){
   `;
 }
 
+function hotelFieldHtml(leg, currentValue, isNew){
+  const list = hotelsForLeg(leg);
+  const matched = list.find(h=>h.name===currentValue);
+  let selectValue;
+  if(currentValue){
+    selectValue = matched ? matched.id : 'other';
+  } else if(isNew){
+    const def = list.find(h=>h.is_default);
+    selectValue = def ? def.id : 'other';
+  } else {
+    selectValue = 'other';
+  }
+  const showOther = selectValue === 'other';
+  return `
+    <select name="${leg}_hotel_select" onchange="toggleHotelOther(this)">
+      <option value="">— Select ${leg==='mecca'?'Mecca':'Madinah'} hotel —</option>
+      ${list.map(h=>`<option value="${h.id}" ${selectValue===h.id?'selected':''}>${esc(h.name)}${h.is_default?' (default)':''}</option>`).join('')}
+      <option value="other" ${showOther?'selected':''}>Other (type manually)</option>
+    </select>
+    <input name="${leg}_hotel_other" placeholder="Hotel name" style="margin-top:6px;${showOther?'':'display:none;'}" value="${showOther?esc(currentValue||''):''}"/>
+  `;
+}
+function toggleHotelOther(sel){
+  const otherInput = sel.parentElement.querySelector(`input[name="${sel.name.replace('_select','_other')}"]`);
+  if(!otherInput) return;
+  otherInput.style.display = sel.value==='other' ? 'block' : 'none';
+}
+function resolveHotelName(form, leg){
+  const sel = form[`${leg}_hotel_select`];
+  if(!sel) return '';
+  if(sel.value === 'other') return form[`${leg}_hotel_other`].value.trim();
+  if(!sel.value) return '';
+  return state.hotels.find(h=>h.id===sel.value)?.name || '';
+}
+async function addHotel(leg){
+  const input = document.getElementById(`hotel-name-${leg}`);
+  const name = input.value.trim();
+  if(!name) return;
+  const { error } = await sb.from('hotels').insert({ name, leg });
+  if(error){ showNotice(error.message, 'error'); return; }
+  const { data } = await sb.from('hotels').select('*').order('name');
+  state.hotels = data || [];
+  openModal('hotels');
+}
+async function deleteHotel(id){
+  await sb.from('hotels').delete().eq('id', id);
+  const { data } = await sb.from('hotels').select('*').order('name');
+  state.hotels = data || [];
+  openModal('hotels');
+}
+async function setDefaultHotel(id, leg){
+  await sb.from('hotels').update({is_default:false}).eq('leg', leg);
+  await sb.from('hotels').update({is_default:true}).eq('id', id);
+  const { data } = await sb.from('hotels').select('*').order('name');
+  state.hotels = data || [];
+  openModal('hotels');
+}
+
 async function saveGroup(e, id){
   e.preventDefault();
   const f = e.target;
   const payload = {
     name: f.name.value, departure_date: f.departure_date.value || null, return_date: f.return_date.value || null,
-    mecca_hotel: f.mecca_hotel.value, madinah_hotel: f.madinah_hotel.value
+    mecca_hotel: resolveHotelName(f, 'mecca'), madinah_hotel: resolveHotelName(f, 'madinah')
   };
   if(id) await sb.from('groups').update(payload).eq('id', id);
   else await sb.from('groups').insert(payload);
@@ -790,13 +859,38 @@ function renderModal(){
           <div class="field"><label>Departure date</label><input type="date" name="departure_date" value="${data.departure_date||''}"/></div>
           <div class="field"><label>Return date</label><input type="date" name="return_date" value="${data.return_date||''}"/></div>
         </div>
-        <div class="field"><label>Mecca hotel</label><input name="mecca_hotel" value="${esc(data.mecca_hotel||'')}"/></div>
-        <div class="field"><label>Madinah hotel</label><input name="madinah_hotel" value="${esc(data.madinah_hotel||'')}"/></div>
+        <div class="field"><label>Mecca hotel</label>${hotelFieldHtml('mecca', data.mecca_hotel, !data.id)}</div>
+        <div class="field"><label>Madinah hotel</label>${hotelFieldHtml('madinah', data.madinah_hotel, !data.id)}</div>
         <div style="display:flex;gap:8px;margin-top:16px;">
           <button type="submit" class="primary" style="flex:1">Save</button>
           <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
         </div>
       </form>
+    `;
+  } else if(type==='hotels'){
+    body = `
+      <h3>Manage hotels</h3>
+      ${['mecca','madinah'].map(leg=>`
+        <div style="margin-bottom:16px;">
+          <label style="text-transform:capitalize;">${leg}</label>
+          <div class="assign-list" style="margin-bottom:10px;">
+            ${hotelsForLeg(leg).map(h=>`
+              <div class="assign-row">
+                <span>${esc(h.name)} ${h.is_default?'<span class="pill ok">Default</span>':''}</span>
+                <div class="row-actions">
+                  ${h.is_default?'':`<button class="ghost" onclick="setDefaultHotel('${h.id}','${leg}')">Set default</button>`}
+                  <button class="danger" onclick="deleteHotel('${h.id}')">Remove</button>
+                </div>
+              </div>
+            `).join('') || '<div class="empty">No hotels added yet</div>'}
+          </div>
+          <div class="two-col">
+            <input id="hotel-name-${leg}" placeholder="e.g. Hilton Makkah"/>
+            <button class="gold" onclick="addHotel('${leg}')">Add ${leg} hotel</button>
+          </div>
+        </div>
+      `).join('')}
+      <button class="ghost" style="width:100%;" onclick="closeModal()">Close</button>
     `;
   } else if(type==='packages'){
     const gid = data.groupId;
