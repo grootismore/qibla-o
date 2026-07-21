@@ -2,8 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Rihla — Umrah Back Office</title>
+<meta name="description" content="Umrah group operations: hajis, rooms, buses, payments, and staff roles." />
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0E3B3A">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rihla">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -33,6 +44,8 @@
   button.gold:hover{background:#c9974a;}
   button.ghost{background:transparent;color:var(--teal);border:1px solid var(--line);}
   button.ghost:hover{background:var(--sand-deep);}
+  #sidebar button.ghost{color:var(--sand);border-color:rgba(242,236,221,.35);}
+  #sidebar button.ghost:hover{background:rgba(255,255,255,.08);}
   button.danger{background:transparent;color:var(--danger);border:1px solid var(--danger);}
   input,select{font-family:'Inter',sans-serif;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fffdf7;color:var(--ink);font-size:13px;width:100%;}
   input:focus,select:focus{outline:2px solid var(--gold-soft);}
@@ -47,17 +60,22 @@
   .pill.warn{background:#f5e6cf;color:var(--gold);}
   .pill.bad{background:#f3ded9;color:var(--danger);}
   #app{min-height:100vh;display:flex;}
-  #sidebar{width:210px;background:var(--teal);color:var(--sand);padding:22px 14px;flex-shrink:0;display:flex;flex-direction:column;}
+  #sidebar{width:210px;background:var(--teal);color:var(--sand);padding:22px 14px;flex-shrink:0;display:flex;flex-direction:column;position:relative;}
   #sidebar h1{color:var(--sand);font-size:22px;letter-spacing:.02em;}
   #sidebar .tagline{font-size:11px;color:var(--gold-soft);margin-top:2px;margin-bottom:26px;font-style:italic;}
   .nav-item{padding:9px 12px;border-radius:8px;margin-bottom:3px;cursor:pointer;font-weight:500;color:#cfe0dc;}
   .nav-item:hover{background:rgba(255,255,255,.06);}
   .nav-item.active{background:var(--gold);color:#2b1d05;font-weight:700;}
-  #main{flex:1;padding:26px 34px;max-width:1200px;}
-  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;}
+  #main{flex:1;padding:26px 34px;max-width:1200px;min-width:0;}
+  .topbar{display:flex;align-items:center;gap:14px;margin-bottom:22px;}
   .group-select{max-width:280px;}
   .grid{display:grid;gap:14px;}
   .grid-4{grid-template-columns:repeat(4,1fr);}
+  .hamburger-btn{display:none;background:transparent;border:1px solid var(--line);color:var(--teal);font-size:16px;line-height:1;padding:8px 11px;border-radius:8px;flex-shrink:0;}
+  .sidebar-close-btn{display:none;position:absolute;top:14px;right:14px;background:transparent;border:none;color:var(--sand);font-size:20px;line-height:1;cursor:pointer;padding:4px;}
+  .sidebar-backdrop{display:none;}
+  .install-btn{margin-top:10px;width:100%;}
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   .stat-label{font-size:11px;text-transform:uppercase;color:#6b6252;letter-spacing:.05em;font-weight:600;}
   .stat-value{font-family:'Fraunces',serif;font-size:28px;color:var(--teal);margin-top:4px;}
   .row-actions{display:flex;gap:6px;}
@@ -82,6 +100,44 @@
   .capacity-bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:6px;}
   .capacity-fill{height:100%;background:var(--teal);}
   .capacity-fill.over{background:var(--danger);}
+  @media (max-width:900px){
+    #main{max-width:100%;}
+  }
+
+  @media (max-width:768px){
+    #app{position:relative;}
+    #sidebar{
+      position:fixed;top:0;left:0;bottom:0;width:250px;max-width:80vw;
+      transform:translateX(-100%);transition:transform .25s ease;z-index:70;
+      box-shadow:2px 0 24px rgba(0,0,0,.3);
+    }
+    #app.nav-open #sidebar{transform:translateX(0);}
+    .sidebar-close-btn{display:block;}
+    .sidebar-backdrop{
+      display:block;position:fixed;inset:0;background:rgba(0,0,0,0);pointer-events:none;
+      transition:background .25s ease;z-index:65;
+    }
+    #app.nav-open .sidebar-backdrop{background:rgba(20,20,18,.45);pointer-events:auto;}
+    .hamburger-btn{display:inline-flex;align-items:center;justify-content:center;}
+    #main{padding:16px;}
+    .grid-4{grid-template-columns:repeat(2,1fr);}
+    .two-col{grid-template-columns:1fr;}
+    .auth-card{width:92vw;max-width:400px;padding:28px 22px;}
+    input,select,textarea{font-size:16px;} /* prevent iOS auto-zoom on focus */
+    .row-actions{flex-wrap:wrap;}
+  }
+
+  @media (max-width:600px){
+    .modal-bg{align-items:stretch;justify-content:stretch;padding:0;}
+    .modal{width:100%;max-width:100%;height:100%;max-height:100%;border-radius:0;padding:20px 16px 28px;}
+    .stat-value{font-size:22px;}
+    h2{font-size:19px;}
+  }
+
+  @media (max-width:420px){
+    .grid-4{grid-template-columns:1fr 1fr;}
+  }
+
 </style>
 </head>
 <body>
@@ -108,7 +164,34 @@ let state = {
   busAssignments: [],
   payments: [],
   modal: null, // {type, data}
+  mobileNavOpen: false,
+  canInstall: false,
 };
+
+// ---------- PWA ----------
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+}
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  state.canInstall = true;
+  render();
+});
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  state.canInstall = false;
+  render();
+});
+async function installApp(){
+  if(!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  state.canInstall = false;
+  render();
+}
 
 const root = document.getElementById('root');
 
@@ -245,8 +328,10 @@ function closeNotice(){ document.getElementById('notice-root').innerHTML = ''; }
 function render(){
   if(!state.session){ renderAuth(); return; }
   root.innerHTML = `
-    <div id="app">
+    <div id="app" class="${state.mobileNavOpen?'nav-open':''}">
+      <div class="sidebar-backdrop" onclick="closeNav()"></div>
       <div id="sidebar">
+        <button class="sidebar-close-btn" onclick="closeNav()" aria-label="Close menu">✕</button>
         <h1>Rihla</h1>
         <div class="tagline">Umrah group operations</div>
         <div style="color:var(--gold-soft);font-size:11px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em;">Signed in as ${state.myRole||'—'}</div>
@@ -258,10 +343,12 @@ function render(){
         ${(can('managePayments')||state.myRole==='admin') ? navItem('payments','Payments') : ''}
         ${can('manageStaff') ? navItem('staff','Staff') : ''}
         <div style="flex:1"></div>
-        <button class="ghost" onclick="signOut()" style="margin-top:20px;">Sign out</button>
+        ${state.canInstall ? `<button class="gold install-btn" onclick="installApp()">⭳ Install app</button>` : ''}
+        <button class="ghost" onclick="signOut()" style="margin-top:10px;">Sign out</button>
       </div>
       <div id="main">
         <div class="topbar">
+          <button class="hamburger-btn" onclick="toggleNav()" aria-label="Open menu">☰</button>
           <div>
             <label>Active group</label>
             <select class="group-select" onchange="switchGroup(this.value)">
@@ -287,7 +374,9 @@ function render(){
 function navItem(view, label){
   return `<div class="nav-item ${state.view===view?'active':''}" onclick="setView('${view}')">${label}</div>`;
 }
-function setView(v){ state.view=v; render(); }
+function setView(v){ state.view=v; state.mobileNavOpen=false; render(); }
+function toggleNav(){ state.mobileNavOpen = !state.mobileNavOpen; render(); }
+function closeNav(){ state.mobileNavOpen = false; render(); }
 
 function renderAuth(){
   root.innerHTML = `
@@ -302,6 +391,7 @@ function renderAuth(){
           <button class="primary" style="flex:1" onclick="doSignIn()">Sign in</button>
           <button class="gold" style="flex:1" onclick="doSignUp()">Create staff account</button>
         </div>
+        ${state.canInstall ? `<button class="ghost install-btn" onclick="installApp()">⭳ Install app</button>` : ''}
       </div>
     </div>
   `;
@@ -349,7 +439,7 @@ function renderGroups(){
     <div class="toolbar">
       ${can('manageGroups') ? `<button class="primary" onclick="openModal('group')">+ New group</button>` : ''}
     </div>
-    <div class="card">
+    <div class="card table-wrap">
       <table>
         <thead><tr><th>Name</th><th>Departure</th><th>Return</th><th>Mecca hotel</th><th>Madinah hotel</th><th>Packages</th><th></th></tr></thead>
         <tbody>
@@ -406,7 +496,7 @@ function renderHajis(){
       ${can('manageHajis') ? `<button class="primary" onclick="openModal('haji')">+ Add haji</button>
       <button class="gold" onclick="openModal('bulkImport')">Bulk import (CSV)</button>` : ''}
     </div>
-    <div class="card">
+    <div class="card table-wrap">
       <table>
         <thead><tr><th>Name</th><th>Passport</th><th>Phone</th><th>Gender</th><th>Package</th><th>Balance</th><th>Family code</th><th></th></tr></thead>
         <tbody>
@@ -578,7 +668,7 @@ function renderPayments(){
     <div class="toolbar">
       ${can('managePayments') ? `<button class="primary" onclick="openModal('payment')">+ Record payment</button>` : ''}
     </div>
-    <div class="card">
+    <div class="card table-wrap">
       <table>
         <thead><tr><th>Haji</th><th>Amount</th><th>Method</th><th>Date</th><th>Reference</th><th></th></tr></thead>
         <tbody>
@@ -661,7 +751,7 @@ async function loadStaffList(){
 }
 function renderStaff(){
   return `
-    <div class="card">
+    <div class="card table-wrap">
       <table>
         <thead><tr><th>Name</th><th>Role</th></tr></thead>
         <tbody>
