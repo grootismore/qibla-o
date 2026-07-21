@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rihla — Umrah Back Office</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --ink:#1C2321;
+    --sand:#F2ECDD;
+    --sand-deep:#E4DAC0;
+    --teal:#0E3B3A;
+    --teal-2:#155953;
+    --gold:#B9862F;
+    --gold-soft:#E7CE9C;
+    --line:#D8CBA6;
+    --danger:#9B3A2E;
+    --ok:#3D6B4C;
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--sand);color:var(--ink);font-family:'Inter',sans-serif;font-size:14px;}
+  h1,h2,h3{font-family:'Fraunces',serif;font-weight:600;margin:0;color:var(--teal);}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+  button{font-family:'Inter',sans-serif;cursor:pointer;border:none;border-radius:var(--radius);padding:8px 14px;font-size:13px;font-weight:600;transition:transform .08s ease, background .15s ease;}
+  button:active{transform:translateY(1px);}
+  button.primary{background:var(--teal);color:var(--sand);}
+  button.primary:hover{background:var(--teal-2);}
+  button.gold{background:var(--gold);color:#2b1d05;}
+  button.gold:hover{background:#c9974a;}
+  button.ghost{background:transparent;color:var(--teal);border:1px solid var(--line);}
+  button.ghost:hover{background:var(--sand-deep);}
+  button.danger{background:transparent;color:var(--danger);border:1px solid var(--danger);}
+  input,select{font-family:'Inter',sans-serif;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fffdf7;color:var(--ink);font-size:13px;width:100%;}
+  input:focus,select:focus{outline:2px solid var(--gold-soft);}
+  label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b6252;font-weight:600;display:block;margin-bottom:4px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b6252;padding:8px 10px;border-bottom:2px solid var(--teal);}
+  td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle;}
+  tr:hover td{background:#faf6ea;}
+  .card{background:#fffdf7;border:1px solid var(--line);border-radius:var(--radius);padding:18px;}
+  .pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:700;}
+  .pill.ok{background:#e0ecdf;color:var(--ok);}
+  .pill.warn{background:#f5e6cf;color:var(--gold);}
+  .pill.bad{background:#f3ded9;color:var(--danger);}
+  #app{min-height:100vh;display:flex;}
+  #sidebar{width:210px;background:var(--teal);color:var(--sand);padding:22px 14px;flex-shrink:0;display:flex;flex-direction:column;}
+  #sidebar h1{color:var(--sand);font-size:22px;letter-spacing:.02em;}
+  #sidebar .tagline{font-size:11px;color:var(--gold-soft);margin-top:2px;margin-bottom:26px;font-style:italic;}
+  .nav-item{padding:9px 12px;border-radius:8px;margin-bottom:3px;cursor:pointer;font-weight:500;color:#cfe0dc;}
+  .nav-item:hover{background:rgba(255,255,255,.06);}
+  .nav-item.active{background:var(--gold);color:#2b1d05;font-weight:700;}
+  #main{flex:1;padding:26px 34px;max-width:1200px;}
+  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;}
+  .group-select{max-width:280px;}
+  .grid{display:grid;gap:14px;}
+  .grid-4{grid-template-columns:repeat(4,1fr);}
+  .stat-label{font-size:11px;text-transform:uppercase;color:#6b6252;letter-spacing:.05em;font-weight:600;}
+  .stat-value{font-family:'Fraunces',serif;font-size:28px;color:var(--teal);margin-top:4px;}
+  .row-actions{display:flex;gap:6px;}
+  .modal-bg{position:fixed;inset:0;background:rgba(28,35,33,.5);display:flex;align-items:center;justify-content:center;z-index:50;}
+  .modal{background:var(--sand);border-radius:14px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto;border:1px solid var(--line);}
+  .modal h3{margin-bottom:16px;}
+  .field{margin-bottom:12px;}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
+  .empty{padding:40px;text-align:center;color:#8a8168;}
+  .empty h3{color:#8a8168;margin-bottom:6px;}
+  .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--teal);}
+  .auth-card{background:var(--sand);border-radius:16px;padding:40px;width:360px;}
+  .auth-card h1{color:var(--teal);font-size:30px;}
+  .auth-card .tagline{color:var(--gold);font-style:italic;margin-bottom:24px;}
+  .link-btn{background:none;border:none;color:var(--teal-2);text-decoration:underline;font-size:12px;padding:0;}
+  .badge-count{background:var(--gold-soft);color:#5b4419;border-radius:99px;padding:1px 7px;font-size:11px;margin-left:6px;}
+  ::-webkit-scrollbar{width:8px;} ::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px;}
+  .assign-list{max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;}
+  .assign-row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);}
+  .assign-row:last-child{border-bottom:none;}
+  .capacity-bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:6px;}
+  .capacity-fill{height:100%;background:var(--teal);}
+  .capacity-fill.over{background:var(--danger);}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+const SUPABASE_URL = "https://wbsknbdoefmzkwidmoqn.supabase.co";
+const SUPABASE_KEY = "sb_publishable_Kjg7FZ1qW0yKJkWosQMBTA_Ojouvu2h";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let state = {
+  session: null,
+  myRole: null,
+  staffList: [],
+  view: 'dashboard',
+  groups: [],
+  activeGroupId: null,
+  packages: [],
+  hajis: [],
+  rooms: [],
+  roomAssignments: [],
+  buses: [],
+  busAssignments: [],
+  payments: [],
+  modal: null, // {type, data}
+};
+
+const root = document.getElementById('root');
+
+function fmt(n){ return 'MVR ' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function esc(s){ return (s??'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ---------- AUTH ----------
+async function initAuth(){
+  const { data } = await sb.auth.getSession();
+  state.session = data.session;
+  sb.auth.onAuthStateChange(async (_event, session) => {
+    state.session = session;
+    if(session) { await loadMyRole(); await loadAll(); }
+    else { state.myRole = null; }
+    render();
+  });
+  if(state.session) await loadMyRole();
+  render();
+  if(state.session) await loadAll();
+}
+
+async function loadMyRole(){
+  const uid = state.session?.user?.id;
+  if(!uid) return;
+  const { data } = await sb.from('staff').select('*').eq('id', uid).maybeSingle();
+  state.myRole = data?.role || 'agent';
+}
+
+function can(action){
+  const r = state.myRole;
+  const rules = {
+    manageGroups: ['admin'],
+    managePackages: ['admin','accountant'],
+    manageHajis: ['admin','agent'],
+    manageRooms: ['admin','agent'],
+    manageBuses: ['admin','agent'],
+    managePayments: ['admin','accountant'],
+    manageStaff: ['admin'],
+  };
+  return (rules[action]||[]).includes(r);
+}
+
+async function signIn(email, password){
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if(error){ alert(error.message); return; }
+}
+async function signUp(email, password, fullName){
+  const { data, error } = await sb.auth.signUp({ email, password });
+  if(error){ alert(error.message); return; }
+  if(data.user){
+    await sb.from('staff').insert({ id: data.user.id, full_name: fullName, role: 'admin' });
+  }
+  alert('Account created. If email confirmation is on, check your inbox — otherwise you are signed in.');
+}
+async function signOut(){ await sb.auth.signOut(); }
+
+// ---------- DATA LOADING ----------
+async function loadAll(){
+  const { data: groups } = await sb.from('groups').select('*').order('departure_date', {ascending:true});
+  state.groups = groups || [];
+  if(!state.activeGroupId && state.groups.length) state.activeGroupId = state.groups[0].id;
+  await loadGroupData();
+  render();
+}
+
+async function loadGroupData(){
+  const gid = state.activeGroupId;
+  if(!gid){ state.packages=[]; state.hajis=[]; state.rooms=[]; state.roomAssignments=[]; state.buses=[]; state.busAssignments=[]; state.payments=[]; return; }
+  const [{data:packages},{data:hajis},{data:rooms},{data:buses}] = await Promise.all([
+    sb.from('packages').select('*').eq('group_id', gid),
+    sb.from('hajis').select('*').eq('group_id', gid).order('full_name'),
+    sb.from('rooms').select('*').eq('group_id', gid).order('room_number'),
+    sb.from('buses').select('*').eq('group_id', gid).order('bus_number'),
+  ]);
+  state.packages = packages || [];
+  state.hajis = hajis || [];
+  state.rooms = rooms || [];
+  state.buses = buses || [];
+
+  const hajiIds = state.hajis.map(h=>h.id);
+  if(hajiIds.length){
+    const [{data:ra},{data:ba},{data:pay}] = await Promise.all([
+      sb.from('room_assignments').select('*').in('haji_id', hajiIds),
+      sb.from('bus_assignments').select('*').in('haji_id', hajiIds),
+      sb.from('payments').select('*').in('haji_id', hajiIds).order('paid_on',{ascending:false}),
+    ]);
+    state.roomAssignments = ra || [];
+    state.busAssignments = ba || [];
+    state.payments = pay || [];
+  } else {
+    state.roomAssignments = []; state.busAssignments = []; state.payments = [];
+  }
+}
+
+async function switchGroup(id){
+  state.activeGroupId = id;
+  await loadGroupData();
+  render();
+}
+
+// ---------- HELPERS ----------
+function hajiById(id){ return state.hajis.find(h=>h.id===id); }
+function packageById(id){ return state.packages.find(p=>p.id===id); }
+function hajiPaid(hajiId){ return state.payments.filter(p=>p.haji_id===hajiId).reduce((s,p)=>s+Number(p.amount),0); }
+function hajiRoom(hajiId, leg){
+  const ra = state.roomAssignments.find(a => a.haji_id===hajiId && state.rooms.find(r=>r.id===a.room_id)?.hotel_leg===leg);
+  return ra ? state.rooms.find(r=>r.id===ra.room_id) : null;
+}
+function roomOccupants(roomId){ return state.roomAssignments.filter(a=>a.room_id===roomId).map(a=>hajiById(a.haji_id)).filter(Boolean); }
+function busOccupants(busId){ return state.busAssignments.filter(a=>a.bus_id===busId).map(a=>hajiById(a.haji_id)).filter(Boolean); }
+
+function openModal(type, data){ state.modal = {type, data: data||{}}; render(); }
+function closeModal(){ state.modal = null; render(); }
+
+// ---------- RENDER ----------
+function render(){
+  if(!state.session){ renderAuth(); return; }
+  root.innerHTML = `
+    <div id="app">
+      <div id="sidebar">
+        <h1>Rihla</h1>
+        <div class="tagline">Umrah group operations</div>
+        <div style="color:var(--gold-soft);font-size:11px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em;">Signed in as ${state.myRole||'—'}</div>
+        ${navItem('dashboard','Dashboard')}
+        ${state.myRole==='admin' ? navItem('groups','Groups') : ''}
+        ${(can('manageHajis')||state.myRole==='accountant') ? navItem('hajis','Hajis') : ''}
+        ${can('manageRooms') ? navItem('rooms','Rooms') : ''}
+        ${can('manageBuses') ? navItem('buses','Buses') : ''}
+        ${(can('managePayments')||state.myRole==='admin') ? navItem('payments','Payments') : ''}
+        ${can('manageStaff') ? navItem('staff','Staff') : ''}
+        <div style="flex:1"></div>
+        <button class="ghost" onclick="signOut()" style="margin-top:20px;">Sign out</button>
+      </div>
+      <div id="main">
+        <div class="topbar">
+          <div>
+            <label>Active group</label>
+            <select class="group-select" onchange="switchGroup(this.value)">
+              ${state.groups.length ? state.groups.map(g=>`<option value="${g.id}" ${g.id===state.activeGroupId?'selected':''}>${esc(g.name)} — ${g.departure_date||'no date'}</option>`).join('') : '<option>No groups yet</option>'}
+            </select>
+          </div>
+        </div>
+        <div id="content"></div>
+      </div>
+    </div>
+    ${state.modal ? renderModal() : ''}
+  `;
+  const content = document.getElementById('content');
+  if(state.view==='dashboard') content.innerHTML = renderDashboard();
+  else if(state.view==='groups') content.innerHTML = renderGroups();
+  else if(state.view==='hajis') content.innerHTML = renderHajis();
+  else if(state.view==='rooms') content.innerHTML = renderRooms();
+  else if(state.view==='buses') content.innerHTML = renderBuses();
+  else if(state.view==='payments') content.innerHTML = renderPayments();
+  else if(state.view==='staff') { content.innerHTML = renderStaff(); loadStaffList(); }
+}
+
+function navItem(view, label){
+  return `<div class="nav-item ${state.view===view?'active':''}" onclick="setView('${view}')">${label}</div>`;
+}
+function setView(v){ state.view=v; render(); }
+
+function renderAuth(){
+  root.innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card">
+        <h1>Rihla</h1>
+        <div class="tagline">Umrah group operations</div>
+        <div class="field"><label>Full name (for new staff account)</label><input id="auth-name" placeholder="Your name"/></div>
+        <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@example.com"/></div>
+        <div class="field"><label>Password</label><input id="auth-pass" type="password" placeholder="••••••••"/></div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button class="primary" style="flex:1" onclick="doSignIn()">Sign in</button>
+          <button class="gold" style="flex:1" onclick="doSignUp()">Create staff account</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function doSignIn(){ signIn(document.getElementById('auth-email').value, document.getElementById('auth-pass').value); }
+function doSignUp(){ signUp(document.getElementById('auth-email').value, document.getElementById('auth-pass').value, document.getElementById('auth-name').value); }
+
+// ---------- DASHBOARD ----------
+function renderDashboard(){
+  const g = state.groups.find(x=>x.id===state.activeGroupId);
+  if(!g) return `<div class="empty"><h3>No group selected</h3><p>Create a group to get started.</p></div>`;
+  const total = state.hajis.length;
+  const totalDue = state.hajis.reduce((s,h)=>{ const pkg=packageById(h.package_id); return s+(pkg?Number(pkg.price):0); },0);
+  const totalCollected = state.payments.reduce((s,p)=>s+Number(p.amount),0);
+  const roomsAssigned = new Set(state.roomAssignments.map(a=>a.haji_id)).size;
+  const busAssignedM = new Set(state.busAssignments.filter(a=>state.buses.find(b=>b.id===a.bus_id)?.leg==='mecca_madinah').map(a=>a.haji_id)).size;
+  const unpaidCount = state.hajis.filter(h=>{ const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; return hajiPaid(h.id) < due; }).length;
+
+  return `
+    <h2 style="margin-bottom:4px;">${esc(g.name)}</h2>
+    <p style="color:#6b6252;margin-bottom:20px;">${g.departure_date||'—'} to ${g.return_date||'—'} · Mecca: ${esc(g.mecca_hotel||'—')} · Madinah: ${esc(g.madinah_hotel||'—')}</p>
+    <div class="grid grid-4">
+      <div class="card"><div class="stat-label">Total hajis</div><div class="stat-value">${total}</div></div>
+      <div class="card"><div class="stat-label">Rooms assigned</div><div class="stat-value">${roomsAssigned}/${total}</div></div>
+      <div class="card"><div class="stat-label">Buses assigned (Mecca-Madinah)</div><div class="stat-value">${busAssignedM}/${total}</div></div>
+      <div class="card"><div class="stat-label">Pilgrims with balance due</div><div class="stat-value" style="color:${unpaidCount?'#9B3A2E':'#3D6B4C'}">${unpaidCount}</div></div>
+    </div>
+    <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:16px;">
+      <div class="card">
+        <div class="stat-label">Total package value</div>
+        <div class="stat-value">${fmt(totalDue)}</div>
+      </div>
+      <div class="card">
+        <div class="stat-label">Total collected</div>
+        <div class="stat-value" style="color:var(--ok)">${fmt(totalCollected)}</div>
+        <div class="capacity-bar"><div class="capacity-fill" style="width:${totalDue?Math.min(100,totalCollected/totalDue*100):0}%"></div></div>
+      </div>
+    </div>
+  `;
+}
+
+// ---------- GROUPS ----------
+function renderGroups(){
+  return `
+    <div class="toolbar">
+      ${can('manageGroups') ? `<button class="primary" onclick="openModal('group')">+ New group</button>` : ''}
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Name</th><th>Departure</th><th>Return</th><th>Mecca hotel</th><th>Madinah hotel</th><th>Packages</th><th></th></tr></thead>
+        <tbody>
+          ${state.groups.map(g=>`
+            <tr>
+              <td><strong>${esc(g.name)}</strong></td>
+              <td>${g.departure_date||'—'}</td>
+              <td>${g.return_date||'—'}</td>
+              <td>${esc(g.mecca_hotel||'—')}</td>
+              <td>${esc(g.madinah_hotel||'—')}</td>
+              <td><button class="ghost" onclick="openModal('packages',{groupId:'${g.id}'})" ${can('managePackages')?'':'disabled'}>Manage${g.id===state.activeGroupId?` <span class="badge-count">${state.packages.length}</span>`:''}</button></td>
+              <td class="row-actions">${can('manageGroups')?`<button class="ghost" onclick="openModal('group', state.groups.find(x=>x.id==='${g.id}'))">Edit</button>`:''}</td>
+            </tr>
+          `).join('') || `<tr><td colspan="7" class="empty">No groups yet — create your first Umrah batch.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function saveGroup(e, id){
+  e.preventDefault();
+  const f = e.target;
+  const payload = {
+    name: f.name.value, departure_date: f.departure_date.value || null, return_date: f.return_date.value || null,
+    mecca_hotel: f.mecca_hotel.value, madinah_hotel: f.madinah_hotel.value
+  };
+  if(id) await sb.from('groups').update(payload).eq('id', id);
+  else await sb.from('groups').insert(payload);
+  closeModal(); await loadAll();
+}
+
+// ---------- PACKAGES (within group modal) ----------
+async function addPackage(groupId){
+  const name = document.getElementById('pkg-name').value.trim();
+  const price = parseFloat(document.getElementById('pkg-price').value || '0');
+  if(!name) return;
+  await sb.from('packages').insert({ group_id: groupId, name, price });
+  const {data} = await sb.from('packages').select('*').eq('group_id', groupId);
+  state.packages = state.activeGroupId===groupId ? data : state.packages;
+  openModal('packages', {groupId});
+  if(state.activeGroupId===groupId) render();
+}
+async function deletePackage(id, groupId){
+  await sb.from('packages').delete().eq('id', id);
+  openModal('packages', {groupId});
+}
+
+// ---------- HAJIS ----------
+function renderHajis(){
+  if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
+  return `
+    <div class="toolbar">
+      ${can('manageHajis') ? `<button class="primary" onclick="openModal('haji')">+ Add haji</button>
+      <button class="gold" onclick="openModal('bulkImport')">Bulk import (CSV)</button>` : ''}
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Name</th><th>Passport</th><th>Phone</th><th>Gender</th><th>Package</th><th>Balance</th><th>Family code</th><th></th></tr></thead>
+        <tbody>
+          ${state.hajis.map(h=>{
+            const pkg = packageById(h.package_id);
+            const due = pkg?Number(pkg.price):0;
+            const paid = hajiPaid(h.id);
+            const bal = due - paid;
+            return `<tr>
+              <td><strong>${esc(h.full_name)}</strong> ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</td>
+              <td class="mono">${esc(h.passport_no||'—')}</td>
+              <td>${esc(h.phone||'—')}</td>
+              <td>${h.gender||'—'}</td>
+              <td>${pkg?esc(pkg.name):'—'}</td>
+              <td><span class="pill ${bal<=0?'ok':'bad'}">${fmt(bal)}</span></td>
+              <td>${esc(h.family_code||'—')}</td>
+              <td class="row-actions">${can('manageHajis')?`<button class="ghost" onclick="openModal('haji', hajiById('${h.id}'))">Edit</button>`:''}</td>
+            </tr>`;
+          }).join('') || `<tr><td colspan="8" class="empty">No hajis in this group yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function saveHaji(e, id){
+  e.preventDefault();
+  const f = e.target;
+  const payload = {
+    group_id: state.activeGroupId,
+    full_name: f.full_name.value,
+    passport_no: f.passport_no.value,
+    phone: f.phone.value,
+    gender: f.gender.value,
+    is_elderly: f.is_elderly.checked,
+    needs_wheelchair: f.needs_wheelchair.checked,
+    family_code: f.family_code.value,
+    package_id: f.package_id.value || null,
+    notes: f.notes.value
+  };
+  if(id) await sb.from('hajis').update(payload).eq('id', id);
+  else await sb.from('hajis').insert(payload);
+  closeModal(); await loadGroupData(); render();
+}
+
+async function bulkImportCSV(){
+  const text = document.getElementById('csv-text').value.trim();
+  if(!text) return;
+  const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
+  const rows = lines.map(line=>{
+    const [full_name, passport_no, phone, gender, family_code] = line.split(',').map(s=>s?.trim());
+    return { group_id: state.activeGroupId, full_name, passport_no, phone, gender: (gender||'').toLowerCase()==='female'?'female':'male', family_code };
+  }).filter(r=>r.full_name);
+  if(rows.length) await sb.from('hajis').insert(rows);
+  closeModal(); await loadGroupData(); render();
+}
+
+// ---------- ROOMS ----------
+function renderRooms(){
+  if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
+  const legs = ['mecca','madinah'];
+  return `
+    <div class="toolbar">
+      ${can('manageRooms') ? `<button class="primary" onclick="openModal('room')">+ Add room</button>` : ''}
+    </div>
+    ${legs.map(leg=>{
+      const rooms = state.rooms.filter(r=>r.hotel_leg===leg);
+      return `
+      <h3 style="margin:18px 0 10px;text-transform:capitalize;">${leg}</h3>
+      <div class="grid grid-4">
+        ${rooms.map(r=>{
+          const occ = roomOccupants(r.id);
+          const over = occ.length > r.capacity;
+          return `<div class="card">
+            <div style="display:flex;justify-content:space-between;">
+              <strong>Room ${esc(r.room_number)}</strong>
+              <span class="pill ${over?'bad':'ok'}">${occ.length}/${r.capacity}</span>
+            </div>
+            <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;text-transform:capitalize;">${r.gender}</div>
+            <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,occ.length/r.capacity*100)}%"></div></div>
+            <div style="margin-top:10px;font-size:12px;">
+              ${occ.map(h=>`<div>${esc(h.full_name)}</div>`).join('') || '<span style="color:#8a8168;">Empty</span>'}
+            </div>
+            <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('assignRoom',{roomId:'${r.id}'})" ${can('manageRooms')?'':'disabled'}>Assign pilgrims</button>
+          </div>`;
+        }).join('') || `<div class="empty" style="grid-column:1/-1;">No rooms added for ${leg} yet.</div>`}
+      </div>
+      `;
+    }).join('')}
+  `;
+}
+
+async function saveRoom(e){
+  e.preventDefault();
+  const f = e.target;
+  await sb.from('rooms').insert({
+    group_id: state.activeGroupId, hotel_leg: f.hotel_leg.value, room_number: f.room_number.value,
+    capacity: parseInt(f.capacity.value||'4'), gender: f.gender.value
+  });
+  closeModal(); await loadGroupData(); render();
+}
+
+async function toggleRoomAssign(roomId, hajiId, assign){
+  if(assign) await sb.from('room_assignments').insert({room_id:roomId, haji_id:hajiId});
+  else {
+    const rec = state.roomAssignments.find(a=>a.room_id===roomId && a.haji_id===hajiId);
+    if(rec) await sb.from('room_assignments').delete().eq('id', rec.id);
+  }
+  await loadGroupData();
+  openModal('assignRoom', {roomId});
+}
+
+// ---------- BUSES ----------
+function renderBuses(){
+  if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
+  const legs = [['airport_transfer','Airport transfer'],['mecca_madinah','Mecca ↔ Madinah'],['ziyarat','Ziyarat']];
+  return `
+    <div class="toolbar">
+      ${can('manageBuses') ? `<button class="primary" onclick="openModal('bus')">+ Add bus</button>` : ''}
+    </div>
+    ${legs.map(([leg,label])=>{
+      const buses = state.buses.filter(b=>b.leg===leg);
+      return `
+      <h3 style="margin:18px 0 10px;">${label}</h3>
+      <div class="grid grid-4">
+        ${buses.map(b=>{
+          const occ = busOccupants(b.id);
+          const over = occ.length > b.capacity;
+          return `<div class="card">
+            <div style="display:flex;justify-content:space-between;">
+              <strong>Bus ${esc(b.bus_number)}</strong>
+              <span class="pill ${over?'bad':'ok'}">${occ.length}/${b.capacity}</span>
+            </div>
+            <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Driver: ${esc(b.driver_name||'—')}</div>
+            <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,occ.length/b.capacity*100)}%"></div></div>
+            <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('assignBus',{busId:'${b.id}'})" ${can('manageBuses')?'':'disabled'}>Assign pilgrims</button>
+          </div>`;
+        }).join('') || `<div class="empty" style="grid-column:1/-1;">No buses added for this leg yet.</div>`}
+      </div>
+      `;
+    }).join('')}
+  `;
+}
+
+async function saveBus(e){
+  e.preventDefault();
+  const f = e.target;
+  await sb.from('buses').insert({
+    group_id: state.activeGroupId, bus_number: f.bus_number.value, leg: f.leg.value,
+    driver_name: f.driver_name.value, capacity: parseInt(f.capacity.value||'45')
+  });
+  closeModal(); await loadGroupData(); render();
+}
+
+async function toggleBusAssign(busId, hajiId, assign){
+  if(assign) await sb.from('bus_assignments').insert({bus_id:busId, haji_id:hajiId});
+  else {
+    const rec = state.busAssignments.find(a=>a.bus_id===busId && a.haji_id===hajiId);
+    if(rec) await sb.from('bus_assignments').delete().eq('id', rec.id);
+  }
+  await loadGroupData();
+  openModal('assignBus', {busId});
+}
+
+// ---------- PAYMENTS ----------
+function renderPayments(){
+  if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
+  return `
+    <div class="toolbar">
+      ${can('managePayments') ? `<button class="primary" onclick="openModal('payment')">+ Record payment</button>` : ''}
+    </div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Haji</th><th>Amount</th><th>Method</th><th>Date</th><th>Reference</th><th></th></tr></thead>
+        <tbody>
+          ${state.payments.map(p=>{
+            const h = hajiById(p.haji_id);
+            return `<tr>
+              <td>${esc(h?.full_name||'Unknown')}</td>
+              <td>${fmt(p.amount)}</td>
+              <td style="text-transform:capitalize;">${p.method.replace('_',' ')}</td>
+              <td>${p.paid_on}</td>
+              <td>${esc(p.reference||'—')}</td>
+              <td><button class="ghost" onclick="printReceipt('${p.id}')">Print receipt</button></td>
+            </tr>`;
+          }).join('') || `<tr><td colspan="6" class="empty">No payments recorded yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function printReceipt(paymentId){
+  const p = state.payments.find(x=>x.id===paymentId);
+  if(!p) return;
+  const h = hajiById(p.haji_id);
+  const g = state.groups.find(x=>x.id===state.activeGroupId);
+  const pkg = packageById(h?.package_id);
+  const due = pkg?Number(pkg.price):0;
+  const paid = hajiPaid(h?.id);
+  const balance = due - paid;
+  const w = window.open('', '_blank', 'width=500,height=700');
+  w.document.write(`
+    <html><head><title>Receipt — ${esc(h?.full_name||'')}</title>
+    <style>
+      body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:36px;}
+      h1{font-size:20px;margin-bottom:2px;color:#0E3B3A;}
+      .sub{color:#6b6252;font-size:12px;margin-bottom:24px;}
+      table{width:100%;border-collapse:collapse;margin-top:18px;}
+      td{padding:8px 0;border-bottom:1px solid #ddd;font-size:14px;}
+      td:first-child{color:#6b6252;}
+      td:last-child{text-align:right;font-weight:600;}
+      .total{font-size:16px;margin-top:16px;display:flex;justify-content:space-between;font-weight:700;}
+      .stamp{margin-top:60px;border-top:1px solid #999;width:200px;padding-top:6px;font-size:11px;color:#6b6252;}
+    </style></head>
+    <body>
+      <h1>Rihla — Payment Receipt</h1>
+      <div class="sub">${esc(g?.name||'')} · Issued ${new Date().toISOString().slice(0,10)}</div>
+      <table>
+        <tr><td>Pilgrim</td><td>${esc(h?.full_name||'—')}</td></tr>
+        <tr><td>Passport</td><td>${esc(h?.passport_no||'—')}</td></tr>
+        <tr><td>Package</td><td>${esc(pkg?.name||'—')}</td></tr>
+        <tr><td>Amount received</td><td>${fmt(p.amount)}</td></tr>
+        <tr><td>Method</td><td style="text-transform:capitalize;">${p.method.replace('_',' ')}</td></tr>
+        <tr><td>Date</td><td>${p.paid_on}</td></tr>
+        <tr><td>Reference</td><td>${esc(p.reference||'—')}</td></tr>
+      </table>
+      <div class="total"><span>Balance remaining</span><span>${fmt(balance)}</span></div>
+      <div class="stamp">Authorized signature</div>
+      <script>window.print();</script>
+    </body></html>
+  `);
+  w.document.close();
+}
+
+async function savePayment(e){
+  e.preventDefault();
+  const f = e.target;
+  await sb.from('payments').insert({
+    haji_id: f.haji_id.value, amount: parseFloat(f.amount.value||'0'),
+    method: f.method.value, paid_on: f.paid_on.value || new Date().toISOString().slice(0,10),
+    reference: f.reference.value, notes: f.notes.value
+  });
+  closeModal(); await loadGroupData(); render();
+}
+
+// ---------- STAFF ----------
+async function loadStaffList(){
+  const { data } = await sb.from('staff').select('*').order('full_name');
+  state.staffList = data || [];
+  if(state.view==='staff') render();
+}
+function renderStaff(){
+  return `
+    <div class="card">
+      <table>
+        <thead><tr><th>Name</th><th>Role</th></tr></thead>
+        <tbody>
+          ${state.staffList.map(s=>`
+            <tr>
+              <td>${esc(s.full_name||'—')} ${s.id===state.session.user.id?'<span class="pill ok">You</span>':''}</td>
+              <td>
+                <select onchange="updateStaffRole('${s.id}', this.value)" ${s.id===state.session.user.id?'disabled':''}>
+                  <option value="admin" ${s.role==='admin'?'selected':''}>Admin</option>
+                  <option value="agent" ${s.role==='agent'?'selected':''}>Agent (hajis/rooms/buses)</option>
+                  <option value="accountant" ${s.role==='accountant'?'selected':''}>Accountant (payments)</option>
+                </select>
+              </td>
+            </tr>
+          `).join('') || `<tr><td colspan="2" class="empty">No staff accounts yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+async function updateStaffRole(id, role){
+  await sb.from('staff').update({role}).eq('id', id);
+  await loadStaffList();
+}
+
+// ---------- MODALS ----------
+function renderModal(){
+  const {type, data} = state.modal;
+  let body = '';
+  if(type==='group'){
+    body = `
+      <h3>${data.id?'Edit group':'New group'}</h3>
+      <form onsubmit="saveGroup(event, ${data.id?`'${data.id}'`:'null'})">
+        <div class="field"><label>Group name</label><input name="name" value="${esc(data.name||'')}" required/></div>
+        <div class="two-col">
+          <div class="field"><label>Departure date</label><input type="date" name="departure_date" value="${data.departure_date||''}"/></div>
+          <div class="field"><label>Return date</label><input type="date" name="return_date" value="${data.return_date||''}"/></div>
+        </div>
+        <div class="field"><label>Mecca hotel</label><input name="mecca_hotel" value="${esc(data.mecca_hotel||'')}"/></div>
+        <div class="field"><label>Madinah hotel</label><input name="madinah_hotel" value="${esc(data.madinah_hotel||'')}"/></div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="submit" class="primary" style="flex:1">Save</button>
+          <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
+    `;
+  } else if(type==='packages'){
+    const gid = data.groupId;
+    const pkgs = state.activeGroupId===gid ? state.packages : [];
+    body = `
+      <h3>Packages</h3>
+      <div class="assign-list" style="margin-bottom:14px;">
+        ${pkgs.map(p=>`<div class="assign-row"><span>${esc(p.name)} — ${fmt(p.price)}</span><button class="danger" onclick="deletePackage('${p.id}','${gid}')">Remove</button></div>`).join('') || '<div class="empty">No packages yet</div>'}
+      </div>
+      <div class="two-col">
+        <input id="pkg-name" placeholder="e.g. Quad sharing"/>
+        <input id="pkg-price" type="number" step="0.01" placeholder="Price (MVR)"/>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="gold" style="flex:1" onclick="addPackage('${gid}')">Add package</button>
+        <button class="ghost" onclick="closeModal()">Close</button>
+      </div>
+    `;
+  } else if(type==='haji'){
+    body = `
+      <h3>${data.id?'Edit haji':'Add haji'}</h3>
+      <form onsubmit="saveHaji(event, ${data.id?`'${data.id}'`:'null'})">
+        <div class="field"><label>Full name</label><input name="full_name" value="${esc(data.full_name||'')}" required/></div>
+        <div class="two-col">
+          <div class="field"><label>Passport no.</label><input name="passport_no" value="${esc(data.passport_no||'')}"/></div>
+          <div class="field"><label>Phone</label><input name="phone" value="${esc(data.phone||'')}"/></div>
+        </div>
+        <div class="two-col">
+          <div class="field"><label>Gender</label>
+            <select name="gender"><option value="male" ${data.gender==='male'?'selected':''}>Male</option><option value="female" ${data.gender==='female'?'selected':''}>Female</option></select>
+          </div>
+          <div class="field"><label>Package</label>
+            <select name="package_id"><option value="">—</option>${state.packages.map(p=>`<option value="${p.id}" ${data.package_id===p.id?'selected':''}>${esc(p.name)} (${fmt(p.price)})</option>`).join('')}</select>
+          </div>
+        </div>
+        <div class="field"><label>Family code (group family members together)</label><input name="family_code" value="${esc(data.family_code||'')}"/></div>
+        <div class="two-col">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;"><input type="checkbox" name="is_elderly" style="width:auto;" ${data.is_elderly?'checked':''}/> Elderly</label>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;"><input type="checkbox" name="needs_wheelchair" style="width:auto;" ${data.needs_wheelchair?'checked':''}/> Needs wheelchair</label>
+        </div>
+        <div class="field"><label>Notes</label><input name="notes" value="${esc(data.notes||'')}"/></div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="submit" class="primary" style="flex:1">Save</button>
+          <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
+    `;
+  } else if(type==='bulkImport'){
+    body = `
+      <h3>Bulk import hajis</h3>
+      <p style="font-size:12px;color:#6b6252;">One per line: <span class="mono">Full name, Passport no, Phone, Gender, Family code</span></p>
+      <textarea id="csv-text" style="width:100%;height:160px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:8px;" placeholder="Ahmed Ismail, A1234567, 7771234, male, FAM01"></textarea>
+      <div style="display:flex;gap:8px;margin-top:14px;">
+        <button class="primary" style="flex:1" onclick="bulkImportCSV()">Import</button>
+        <button class="ghost" onclick="closeModal()">Cancel</button>
+      </div>
+    `;
+  } else if(type==='room'){
+    body = `
+      <h3>Add room</h3>
+      <form onsubmit="saveRoom(event)">
+        <div class="two-col">
+          <div class="field"><label>Leg</label><select name="hotel_leg"><option value="mecca">Mecca</option><option value="madinah">Madinah</option></select></div>
+          <div class="field"><label>Room number</label><input name="room_number" required/></div>
+        </div>
+        <div class="two-col">
+          <div class="field"><label>Capacity</label><input type="number" name="capacity" value="4"/></div>
+          <div class="field"><label>Type</label><select name="gender"><option value="family">Family</option><option value="male">Male only</option><option value="female">Female only</option></select></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="submit" class="primary" style="flex:1">Save</button>
+          <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
+    `;
+  } else if(type==='assignRoom'){
+    const room = state.rooms.find(r=>r.id===data.roomId);
+    const occIds = new Set(roomOccupants(room.id).map(h=>h.id));
+    body = `
+      <h3>Assign to Room ${esc(room.room_number)}</h3>
+      <div class="assign-list">
+        ${state.hajis.map(h=>`
+          <div class="assign-row">
+            <span>${esc(h.full_name)} ${h.family_code?`<span style="color:#8a8168;">(${esc(h.family_code)})</span>`:''}</span>
+            <input type="checkbox" style="width:auto;" ${occIds.has(h.id)?'checked':''} onchange="toggleRoomAssign('${room.id}','${h.id}',this.checked)"/>
+          </div>
+        `).join('') || '<div class="empty">No hajis yet</div>'}
+      </div>
+      <button class="ghost" style="width:100%;margin-top:12px;" onclick="closeModal()">Done</button>
+    `;
+  } else if(type==='bus'){
+    body = `
+      <h3>Add bus</h3>
+      <form onsubmit="saveBus(event)">
+        <div class="two-col">
+          <div class="field"><label>Leg</label><select name="leg"><option value="airport_transfer">Airport transfer</option><option value="mecca_madinah">Mecca ↔ Madinah</option><option value="ziyarat">Ziyarat</option></select></div>
+          <div class="field"><label>Bus number</label><input name="bus_number" required/></div>
+        </div>
+        <div class="two-col">
+          <div class="field"><label>Driver name</label><input name="driver_name"/></div>
+          <div class="field"><label>Capacity</label><input type="number" name="capacity" value="45"/></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="submit" class="primary" style="flex:1">Save</button>
+          <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
+    `;
+  } else if(type==='assignBus'){
+    const bus = state.buses.find(b=>b.id===data.busId);
+    const occIds = new Set(busOccupants(bus.id).map(h=>h.id));
+    body = `
+      <h3>Assign to Bus ${esc(bus.bus_number)}</h3>
+      <div class="assign-list">
+        ${state.hajis.map(h=>`
+          <div class="assign-row">
+            <span>${esc(h.full_name)}</span>
+            <input type="checkbox" style="width:auto;" ${occIds.has(h.id)?'checked':''} onchange="toggleBusAssign('${bus.id}','${h.id}',this.checked)"/>
+          </div>
+        `).join('') || '<div class="empty">No hajis yet</div>'}
+      </div>
+      <button class="ghost" style="width:100%;margin-top:12px;" onclick="closeModal()">Done</button>
+    `;
+  } else if(type==='payment'){
+    body = `
+      <h3>Record payment</h3>
+      <form onsubmit="savePayment(event)">
+        <div class="field"><label>Haji</label>
+          <select name="haji_id" required>${state.hajis.map(h=>{
+            const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; const bal=due-hajiPaid(h.id);
+            return `<option value="${h.id}">${esc(h.full_name)} — balance ${fmt(bal)}</option>`;
+          }).join('')}</select>
+        </div>
+        <div class="two-col">
+          <div class="field"><label>Amount (MVR)</label><input type="number" step="0.01" name="amount" required/></div>
+          <div class="field"><label>Date</label><input type="date" name="paid_on" value="${new Date().toISOString().slice(0,10)}"/></div>
+        </div>
+        <div class="field"><label>Method</label><select name="method"><option value="cash">Cash</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></div>
+        <div class="field"><label>Reference</label><input name="reference" placeholder="Receipt / slip no."/></div>
+        <div class="field"><label>Notes</label><input name="notes"/></div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="submit" class="primary" style="flex:1">Save</button>
+          <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
+    `;
+  }
+  return `<div class="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal">${body}</div></div>`;
+}
+
+initAuth();
+</script>
+</body>
+</html>
