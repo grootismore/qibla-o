@@ -103,6 +103,17 @@
   .assign-list{max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;}
   .assign-row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);}
   .assign-row:last-child{border-bottom:none;}
+  .haji-list{display:flex;flex-direction:column;gap:8px;}
+  .haji-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border:1px solid var(--line);border-radius:10px;background:#fffdf7;cursor:pointer;transition:background .1s ease;}
+  .haji-row:hover{background:var(--sand-deep);}
+  .haji-name{font-weight:700;color:var(--ink);}
+  .haji-summary{font-size:12px;color:#8a8168;margin-top:3px;}
+  .haji-chevron{color:#8a8168;flex-shrink:0;}
+  .detail-list{display:flex;flex-direction:column;gap:10px;}
+  .detail-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-bottom:9px;border-bottom:1px solid var(--line);}
+  .detail-row:last-child{border-bottom:none;padding-bottom:0;}
+  .detail-label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b6252;font-weight:600;flex-shrink:0;}
+  .detail-value{font-size:13px;color:var(--ink);text-align:right;}
   .capacity-bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:6px;}
   .capacity-fill{height:100%;background:var(--teal);}
   .capacity-fill.over{background:var(--danger);}
@@ -556,6 +567,19 @@ function hajiRoom(hajiId, leg){
 }
 function roomOccupants(roomId){ return state.roomAssignments.filter(a=>a.room_id===roomId).map(a=>hajiById(a.haji_id)).filter(Boolean); }
 function busOccupants(busId){ return state.busAssignments.filter(a=>a.bus_id===busId).map(a=>hajiById(a.haji_id)).filter(Boolean); }
+function hajiBus(hajiId){
+  const ba = state.busAssignments.find(a=>a.haji_id===hajiId);
+  return ba ? state.buses.find(b=>b.id===ba.bus_id) : null;
+}
+function hajiSummaryLine(h){
+  const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
+  const bus = hajiBus(h.id);
+  const parts = [];
+  if(h.group_number) parts.push(esc(h.group_number));
+  if(room) parts.push(`Room ${esc(room.room_number)}`);
+  if(bus) parts.push(`Bus ${esc(bus.bus_number)}`);
+  return parts.join(' • ') || 'No group, room, or bus assigned yet';
+}
 function tripsForPayment(paymentId){ return state.paymentTripItems.filter(t=>t.payment_id===paymentId); }
 function ageCategory(age){
   if(age==null) return 'Adult';
@@ -1195,34 +1219,16 @@ function renderHajis(){
     <div class="toolbar">
       ${can('manageHajis') ? `<button class="primary" onclick="openModal('haji')">+ Add haji</button>` : ''}
     </div>
-    <div class="card table-wrap">
-      <table>
-        <thead><tr><th>Name</th><th>Passport</th><th>Phone</th><th>Gender</th><th>Age</th><th>Package</th><th>Balance</th><th>Family code</th><th>Flight</th><th>Q no.</th><th>Group no.</th><th>Room</th><th></th></tr></thead>
-        <tbody>
-          ${state.hajis.map(h=>{
-            const pkg = packageById(h.package_id);
-            const due = pkg?Number(pkg.price):0;
-            const paid = hajiPaid(h.id);
-            const bal = due - paid;
-            const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
-            return `<tr>
-              <td><strong>${esc(h.full_name)}</strong> ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</td>
-              <td class="mono" data-label="Passport">${esc(h.passport_no||'—')}</td>
-              <td data-label="Phone">${esc(h.phone||'—')}</td>
-              <td data-label="Gender">${titleCase(h.gender)||'—'}</td>
-              <td data-label="Age">${h.age??'—'}</td>
-              <td data-label="Package">${pkg?esc(pkg.name):'—'}</td>
-              <td data-label="Balance"><span class="pill ${bal<=0?'ok':'bad'}">${fmt(bal)}</span></td>
-              <td data-label="Family code">${esc(h.family_code||'—')}</td>
-              <td data-label="Flight">${esc(h.flight_number||'—')}</td>
-              <td data-label="Q no.">${esc(h.q_number||'—')}</td>
-              <td data-label="Group no.">${esc(h.group_number||'—')}</td>
-              <td data-label="Room">${room?`${esc(room.room_number)} <span style="color:#8a8168;text-transform:capitalize;">(${room.hotel_leg})</span>`:'—'}</td>
-              <td class="row-actions">${can('manageHajis')?`<button class="ghost" onclick="openModal('haji', hajiById('${h.id}'))">Edit</button>`:''}</td>
-            </tr>`;
-          }).join('') || `<tr><td colspan="13" class="empty">No hajis in this group yet.</td></tr>`}
-        </tbody>
-      </table>
+    <div class="haji-list">
+      ${state.hajis.map(h=>`
+        <div class="haji-row" onclick="openModal('hajiDetail', hajiById('${h.id}'))">
+          <div>
+            <div class="haji-name">${esc(h.full_name)} ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</div>
+            <div class="haji-summary">${hajiSummaryLine(h)}</div>
+          </div>
+          <svg class="haji-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
+        </div>
+      `).join('') || `<div class="empty">No hajis in this group yet.</div>`}
     </div>
   `;
 }
@@ -2148,6 +2154,40 @@ function renderModal(){
       <div style="display:flex;gap:8px;margin-top:12px;">
         <button class="gold" style="flex:1" onclick="addTripType()">Add trip type</button>
         <button class="ghost" onclick="closeModal()">Close</button>
+      </div>
+    `;
+  } else if(type==='hajiDetail'){
+    const h = data;
+    const pkg = packageById(h.package_id);
+    const due = pkg?Number(pkg.price):0;
+    const bal = due - hajiPaid(h.id);
+    const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
+    const bus = hajiBus(h.id);
+    const detailRow = (label, value) => `<div class="detail-row"><span class="detail-label">${label}</span><span class="detail-value">${value}</span></div>`;
+    body = `
+      <h3>${esc(h.full_name)}</h3>
+      <div style="display:flex;gap:6px;margin-bottom:12px;">
+        ${h.is_elderly?'<span class="pill warn">Elderly</span>':''}
+        ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}
+      </div>
+      <div class="detail-list">
+        ${detailRow('Passport', esc(h.passport_no||'—'))}
+        ${detailRow('Phone', esc(h.phone||'—'))}
+        ${detailRow('Gender', titleCase(h.gender)||'—')}
+        ${detailRow('Age', h.age??'—')}
+        ${detailRow('Package', pkg?esc(pkg.name):'—')}
+        ${detailRow('Balance', `<span class="pill ${bal<=0?'ok':'bad'}">${fmt(bal)}</span>`)}
+        ${detailRow('Family code', esc(h.family_code||'—'))}
+        ${detailRow('Flight number', esc(h.flight_number||'—'))}
+        ${detailRow('Q number', esc(h.q_number||'—'))}
+        ${detailRow('Group number', esc(h.group_number||'—'))}
+        ${detailRow('Room', room?`${esc(room.room_number)} (${titleCase(room.hotel_leg)})`:'—')}
+        ${detailRow('Bus', bus?`${esc(bus.bus_number)} (${titleCase(bus.leg.replace(/_/g,' '))})`:'—')}
+        ${detailRow('Notes', esc(h.notes||'—'))}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:16px;">
+        ${can('manageHajis') ? `<button class="primary" style="flex:1" onclick="openModal('haji', hajiById('${h.id}'))">Edit</button>` : ''}
+        <button class="ghost" style="flex:1" onclick="closeModal()">Close</button>
       </div>
     `;
   } else if(type==='haji'){
