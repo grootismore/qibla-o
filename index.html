@@ -284,6 +284,11 @@ async function loadMyRole(){
   state.myRole = 'agent'; state.isHaji = false;
 }
 
+function roleLabel(role){
+  const labels = { super_admin:'Super Admin', admin:'Admin', agent:'Agent', accountant:'Accountant', haji:'Pilgrim' };
+  return labels[role] || role || '—';
+}
+function titleCase(s){ return (s||'').replace(/_/g,' ').replace(/\b\w/g, c=>c.toUpperCase()); }
 function canRole(action, role){
   if(role==='super_admin') return true; // super admins (system owners) can do everything staff can
   const rules = {
@@ -544,7 +549,7 @@ function render(){
         <button class="sidebar-close-btn" onclick="closeNav()" aria-label="Close menu">✕</button>
         <h1>Rihla</h1>
         <div class="tagline">Umrah group operations</div>
-        <div style="color:var(--gold-soft);font-size:11px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em;">Signed in as ${state.myRole||'—'}</div>
+        <div style="color:var(--gold-soft);font-size:11px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em;">Signed in as ${roleLabel(state.myRole)}</div>
         ${navItems.map(item=>`<div class="nav-item ${item.activeViews.includes(state.view)?'active':''}" onclick="${item.onclick}"><span class="nav-icon">${icon(item.key,18)}</span><span>${item.label}</span></div>`).join('')}
         <div style="flex:1"></div>
         ${state.canInstall ? `<button class="gold install-btn" onclick="installApp()">⭳ Install app</button>` : ''}
@@ -922,7 +927,7 @@ function renderHajis(){
               <td><strong>${esc(h.full_name)}</strong> ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</td>
               <td class="mono">${esc(h.passport_no||'—')}</td>
               <td>${esc(h.phone||'—')}</td>
-              <td>${h.gender||'—'}</td>
+              <td>${titleCase(h.gender)||'—'}</td>
               <td>${h.age??'—'}</td>
               <td>${pkg?esc(pkg.name):'—'}</td>
               <td><span class="pill ${bal<=0?'ok':'bad'}">${fmt(bal)}</span></td>
@@ -1292,7 +1297,7 @@ function renderTripCollector(){
           <label>Room</label>
           <select id="collector-room">
             <option value="">Select room</option>
-            ${state.rooms.map(r=>`<option value="${r.id}">${esc(r.room_number)} (${r.hotel_leg})</option>`).join('')}
+            ${state.rooms.map(r=>`<option value="${r.id}">${esc(r.room_number)} (${titleCase(r.hotel_leg)})</option>`).join('')}
           </select>
           <button class="ghost" style="width:100%;margin-top:8px;" onclick="addRoomToCollector()">Add Room</button>
         </div>
