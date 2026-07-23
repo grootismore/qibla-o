@@ -988,16 +988,99 @@ async function saveHaji(e, id){
   closeModal(); await loadGroupData(); render();
 }
 
-async function bulkImportCSV(){
+const BULK_IMPORT_DEFS = {
+  hajis: {
+    table: 'hajis',
+    title: 'Bulk import hajis',
+    hint: 'One per line: <span class="mono">Full name, Passport no, Phone, Gender, Family code</span>',
+    placeholder: 'Ahmed Ismail, A1234567, 7771234, male, FAM01',
+    parse(line){
+      const [full_name, passport_no, phone, gender, family_code] = line.split(',').map(s=>s?.trim());
+      return full_name ? { group_id: state.activeGroupId, full_name, passport_no, phone, gender: (gender||'').toLowerCase()==='female'?'female':'male', family_code } : null;
+    }
+  },
+  rooms: {
+    table: 'rooms',
+    title: 'Bulk import rooms',
+    hint: 'One per line: <span class="mono">Leg (mecca/madinah), Room number, Capacity, Type (family/male/female)</span>',
+    placeholder: 'mecca, 1204, 4, family',
+    parse(line){
+      const [leg, room_number, capacity, gender] = line.split(',').map(s=>s?.trim());
+      if(!room_number) return null;
+      return { group_id: state.activeGroupId, hotel_leg: (leg||'').toLowerCase()==='madinah'?'madinah':'mecca', room_number, capacity: parseInt(capacity||'4'), gender: ['male','female'].includes((gender||'').toLowerCase())?gender.toLowerCase():'family' };
+    }
+  },
+  buses: {
+    table: 'buses',
+    title: 'Bulk import buses',
+    hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Driver name, Capacity</span>',
+    placeholder: 'airport_transfer, B-12, Ali Hassan, 45',
+    parse(line){
+      const [leg, bus_number, driver_name, capacity] = line.split(',').map(s=>s?.trim());
+      if(!bus_number) return null;
+      const legs = ['airport_transfer','mecca_madinah','ziyarat'];
+      return { group_id: state.activeGroupId, leg: legs.includes((leg||'').toLowerCase())?leg.toLowerCase():'airport_transfer', bus_number, driver_name, capacity: parseInt(capacity||'45') };
+    }
+  },
+  hotels: {
+    table: 'hotels',
+    title: 'Bulk import hotels',
+    hint: 'One per line: <span class="mono">Hotel name, Leg (mecca/madinah)</span>',
+    placeholder: 'Hilton Makkah, mecca',
+    parse(line){
+      const [name, leg] = line.split(',').map(s=>s?.trim());
+      return name ? { name, leg: (leg||'').toLowerCase()==='madinah'?'madinah':'mecca' } : null;
+    }
+  },
+  tripTypes: {
+    table: 'trip_types',
+    title: 'Bulk import trip types',
+    hint: 'One per line: <span class="mono">Trip name, Adult price, Child (5-9) price</span>',
+    placeholder: 'Hira, 150, 75',
+    parse(line){
+      const [name, price_adult, price_child] = line.split(',').map(s=>s?.trim());
+      return name ? { group_id: state.activeGroupId, name, price_adult: parseFloat(price_adult||'0'), price_child: parseFloat(price_child||'0') } : null;
+    }
+  },
+  packages: {
+    table: 'packages',
+    title: 'Bulk import packages',
+    hint: 'One per line: <span class="mono">Package name, Price</span>',
+    placeholder: 'Quad sharing, 8500',
+    parse(line, groupId){
+      const [name, price] = line.split(',').map(s=>s?.trim());
+      return name ? { group_id: groupId, name, price: parseFloat(price||'0') } : null;
+    }
+  }
+};
+
+async function bulkImportCSV(entity, groupId){
+  entity = entity || 'hajis';
+  const def = BULK_IMPORT_DEFS[entity];
   const text = document.getElementById('csv-text').value.trim();
-  if(!text) return;
+  if(!text || !def) return;
   const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
-  const rows = lines.map(line=>{
-    const [full_name, passport_no, phone, gender, family_code] = line.split(',').map(s=>s?.trim());
-    return { group_id: state.activeGroupId, full_name, passport_no, phone, gender: (gender||'').toLowerCase()==='female'?'female':'male', family_code };
-  }).filter(r=>r.full_name);
-  if(rows.length) await sb.from('hajis').insert(rows);
-  closeModal(); await loadGroupData(); render();
+  const rows = lines.map(line=>def.parse(line, groupId)).filter(Boolean);
+  if(rows.length){
+    const { error } = await sb.from(def.table).insert(rows);
+    if(error){ showNotice(error.message, 'error'); return; }
+  }
+  if(entity==='hotels'){
+    const { data } = await sb.from('hotels').select('*').order('name');
+    state.hotels = data || [];
+    openModal('hotels');
+  } else if(entity==='tripTypes'){
+    const { data } = await sb.from('trip_types').select('*').eq('group_id', state.activeGroupId).order('name');
+    state.tripTypes = data || [];
+    openModal('tripTypes');
+  } else if(entity==='packages'){
+    const { data } = await sb.from('packages').select('*').eq('group_id', groupId);
+    if(state.activeGroupId===groupId) state.packages = data || [];
+    openModal('packages', {groupId});
+    render();
+  } else {
+    closeModal(); await loadGroupData(); render();
+  }
 }
 
 // ---------- ROOMS ----------
@@ -1006,7 +1089,8 @@ function renderRooms(){
   const legs = ['mecca','madinah'];
   return `
     <div class="toolbar">
-      ${can('manageRooms') ? `<button class="primary" onclick="openModal('room')">+ Add room</button>` : ''}
+      ${can('manageRooms') ? `<button class="primary" onclick="openModal('room')">+ Add room</button>
+      <button class="ghost" onclick="openModal('bulkImport',{entity:'rooms'})">Bulk import (CSV)</button>` : ''}
     </div>
     ${legs.map(leg=>{
       const rooms = state.rooms.filter(r=>r.hotel_leg===leg);
@@ -1061,7 +1145,8 @@ function renderBuses(){
   const legs = [['airport_transfer','Airport transfer'],['mecca_madinah','Mecca ↔ Madinah'],['ziyarat','Ziyarat']];
   return `
     <div class="toolbar">
-      ${can('manageBuses') ? `<button class="primary" onclick="openModal('bus')">+ Add bus</button>` : ''}
+      ${can('manageBuses') ? `<button class="primary" onclick="openModal('bus')">+ Add bus</button>
+      <button class="ghost" onclick="openModal('bulkImport',{entity:'buses'})">Bulk import (CSV)</button>` : ''}
     </div>
     ${legs.map(([leg,label])=>{
       const buses = state.buses.filter(b=>b.leg===leg);
@@ -1704,7 +1789,10 @@ function renderModal(){
           </div>
         </div>
       `).join('')}
-      <button class="ghost" style="width:100%;" onclick="closeModal()">Close</button>
+      <div style="display:flex;gap:8px;">
+        <button class="ghost" style="flex:1" onclick="openModal('bulkImport',{entity:'hotels'})">Bulk import (CSV)</button>
+        <button class="ghost" style="flex:1" onclick="closeModal()">Close</button>
+      </div>
     `;
   } else if(type==='packages'){
     const gid = data.groupId;
@@ -1720,6 +1808,7 @@ function renderModal(){
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
         <button class="gold" style="flex:1" onclick="addPackage('${gid}')">Add package</button>
+        <button class="ghost" onclick="openModal('bulkImport',{entity:'packages',groupId:'${gid}'})">Bulk import</button>
         <button class="ghost" onclick="closeModal()">Close</button>
       </div>
     `;
@@ -1737,6 +1826,7 @@ function renderModal(){
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
         <button class="gold" style="flex:1" onclick="addTripType()">Add trip type</button>
+        <button class="ghost" onclick="openModal('bulkImport',{entity:'tripTypes'})">Bulk import</button>
         <button class="ghost" onclick="closeModal()">Close</button>
       </div>
     `;
@@ -1771,12 +1861,14 @@ function renderModal(){
       </form>
     `;
   } else if(type==='bulkImport'){
+    const entity = data.entity || 'hajis';
+    const def = BULK_IMPORT_DEFS[entity];
     body = `
-      <h3>Bulk import hajis</h3>
-      <p style="font-size:12px;color:#6b6252;">One per line: <span class="mono">Full name, Passport no, Phone, Gender, Family code</span></p>
-      <textarea id="csv-text" style="width:100%;height:160px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:8px;" placeholder="Ahmed Ismail, A1234567, 7771234, male, FAM01"></textarea>
+      <h3>${def.title}</h3>
+      <p style="font-size:12px;color:#6b6252;">${def.hint}</p>
+      <textarea id="csv-text" style="width:100%;height:160px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:8px;" placeholder="${esc(def.placeholder)}"></textarea>
       <div style="display:flex;gap:8px;margin-top:14px;">
-        <button class="primary" style="flex:1" onclick="bulkImportCSV()">Import</button>
+        <button class="primary" style="flex:1" onclick="bulkImportCSV('${entity}'${data.groupId?`,'${data.groupId}'`:''})">Import</button>
         <button class="ghost" onclick="closeModal()">Cancel</button>
       </div>
     `;
