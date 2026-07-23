@@ -115,6 +115,47 @@
   .trip-total{font-weight:700;margin-left:auto;white-space:nowrap;}
   .collector-footer{position:sticky;bottom:0;background:var(--sand);border-top:2px solid var(--teal);padding:14px 18px;margin-top:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;border-radius:0 0 var(--radius) var(--radius);box-shadow:0 -4px 16px rgba(28,35,33,.08);}
   .collector-payment-fields{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;flex:1;min-width:280px;max-width:520px;}
+
+  /* ---- Custom searchable select ---- */
+  .cselect{position:relative;}
+  .cselect-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:#fffdf7;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;font-weight:400;color:var(--ink);text-align:left;}
+  .cselect-trigger:focus{outline:2px solid var(--gold-soft);}
+  .cselect-trigger[disabled]{opacity:.5;cursor:not-allowed;}
+  .cselect-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cselect-chevron{flex-shrink:0;color:#8a8168;transition:transform .15s ease;}
+  .cselect.open .cselect-chevron{transform:rotate(180deg);}
+  .cselect-panel{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:220;background:#fffdf7;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(28,35,33,.18);overflow:hidden;}
+  .cselect.open .cselect-panel{display:block;}
+  .cselect-search{border:none;border-bottom:1px solid var(--line);border-radius:0;font-size:13px;padding:9px 10px;width:100%;}
+  .cselect-search:focus{outline:none;}
+  .cselect-options{max-height:220px;overflow-y:auto;}
+  .cselect-option{padding:8px 10px;font-size:13px;cursor:pointer;}
+  .cselect-option:hover{background:var(--sand-deep);}
+  .cselect-option.selected{background:var(--gold-soft);font-weight:600;}
+  .cselect-empty,.cselect-no-match{padding:10px;font-size:12px;color:#8a8168;text-align:center;}
+
+  /* ---- Custom date picker ---- */
+  .cdate{position:relative;}
+  .cdate-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:#fffdf7;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;font-weight:400;color:var(--ink);text-align:left;}
+  .cdate-trigger:focus{outline:2px solid var(--gold-soft);}
+  .cdate-icon{flex-shrink:0;color:#8a8168;}
+  .cdate-panel{display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:220;width:260px;background:#fffdf7;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(28,35,33,.18);padding:12px;}
+  .cdate.open .cdate-panel{display:block;}
+  .cdate-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+  .cdate-month-label{font-weight:700;font-size:13px;color:var(--teal);}
+  .cdate-nav{background:transparent;border:1px solid var(--line);border-radius:6px;width:26px;height:26px;padding:0;font-size:15px;line-height:1;color:var(--teal);}
+  .cdate-nav:hover{background:var(--sand-deep);}
+  .cdate-weekdays{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px;}
+  .cdate-weekday{text-align:center;font-size:10px;font-weight:700;color:#8a8168;text-transform:uppercase;}
+  .cdate-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}
+  .cdate-cell{text-align:center;padding:6px 0;font-size:12.5px;border-radius:6px;cursor:pointer;}
+  .cdate-cell.empty{cursor:default;}
+  .cdate-cell:not(.empty):hover{background:var(--sand-deep);}
+  .cdate-cell.today{border:1px solid var(--gold);}
+  .cdate-cell.selected{background:var(--teal);color:var(--sand);font-weight:700;}
+  .cdate-footer{display:flex;gap:8px;margin-top:10px;}
+  .cdate-footer button{padding:6px 10px;font-size:12px;}
+
   @media (max-width:900px){
     #main{max-width:100%;}
   }
@@ -139,6 +180,7 @@
     .auth-card{width:92vw;max-width:400px;padding:28px 22px;}
     input,select,textarea{font-size:16px;padding:10px 12px;} /* prevent iOS auto-zoom on focus + bigger tap area */
     button{padding:10px 14px;min-height:40px;}
+    .cselect-trigger,.cdate-trigger,.cselect-search{font-size:16px;padding:10px 12px;min-height:40px;}
     .row-actions{flex-wrap:wrap;}
     .collector-payment-fields{grid-template-columns:1fr;min-width:0;}
     .collector-footer{position:static;flex-direction:column;align-items:stretch;box-shadow:none;}
@@ -551,6 +593,218 @@ function showNotice(message, kind){
 }
 function closeNotice(){ document.getElementById('notice-root').innerHTML = ''; }
 
+// ---------- CUSTOM FORM COMPONENTS (searchable select + date picker) ----------
+function customSelectHtml({ name, id, options, value, placeholder, onChange, required, disabled, searchable }){
+  options = options || [];
+  if(value===undefined || value===null || value===''){
+    if(!placeholder && options.length) value = options[0].value;
+  }
+  const selected = options.find(o=>String(o.value)===String(value));
+  const label = selected ? selected.label : (placeholder || 'Select…');
+  const idAttr = id ? ` id="${esc(id)}"` : '';
+  const nameAttr = name ? ` name="${esc(name)}"` : '';
+  const onchangeAttr = onChange ? ` onchange="${esc(onChange)}"` : '';
+  const requiredAttr = required ? ' required' : '';
+  return `
+    <div class="cselect">
+      <input type="hidden"${nameAttr}${idAttr} value="${esc(value??'')}"${onchangeAttr}${requiredAttr}/>
+      <button type="button" class="cselect-trigger" ${disabled?'disabled':''}>
+        <span class="cselect-label">${esc(label)}</span>
+        <svg class="cselect-chevron" width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg>
+      </button>
+      <div class="cselect-panel">
+        ${searchable===false ? '' : `<input type="text" class="cselect-search" placeholder="Search…"/>`}
+        <div class="cselect-options">
+          ${options.map(o=>`<div class="cselect-option ${String(o.value)===String(value)?'selected':''}" data-value="${esc(o.value)}" data-label="${esc(String(o.label).toLowerCase())}">${esc(o.label)}</div>`).join('') || '<div class="cselect-empty">No options</div>'}
+        </div>
+        <div class="cselect-no-match" hidden>No matches</div>
+      </div>
+    </div>
+  `;
+}
+
+const CDATE_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const CDATE_WEEKDAYS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+function formatDateDisplay(iso){
+  if(!iso) return '';
+  const [y,m,d] = iso.split('-').map(Number);
+  if(!y||!m||!d) return iso;
+  return new Date(y, m-1, d).toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
+}
+
+function customDateHtml({ name, id, value, placeholder, onChange, required }){
+  const idAttr = id ? ` id="${esc(id)}"` : '';
+  const nameAttr = name ? ` name="${esc(name)}"` : '';
+  const onchangeAttr = onChange ? ` onchange="${esc(onChange)}"` : '';
+  const requiredAttr = required ? ' required' : '';
+  const label = value ? formatDateDisplay(value) : (placeholder || 'Select date');
+  return `
+    <div class="cdate">
+      <input type="hidden"${nameAttr}${idAttr} value="${esc(value||'')}"${onchangeAttr}${requiredAttr}/>
+      <button type="button" class="cdate-trigger">
+        <span class="cdate-label" data-placeholder="${esc(placeholder||'Select date')}">${esc(label)}</span>
+        <svg class="cdate-icon" width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="14" height="12" rx="1.6"/><line x1="3" y1="8.5" x2="17" y2="8.5"/><line x1="6.5" y1="2.5" x2="6.5" y2="6"/><line x1="13.5" y1="2.5" x2="13.5" y2="6"/></svg>
+      </button>
+      <div class="cdate-panel"></div>
+    </div>
+  `;
+}
+
+function closeAllCSelects(){ document.querySelectorAll('.cselect.open').forEach(w=>w.classList.remove('open')); }
+function closeAllCDates(){ document.querySelectorAll('.cdate.open').forEach(w=>w.classList.remove('open')); }
+
+function filterCSelectOptions(wrap, query){
+  const q = query.trim().toLowerCase();
+  let anyVisible = false;
+  wrap.querySelectorAll('.cselect-option').forEach(opt=>{
+    const match = !q || (opt.getAttribute('data-label')||'').includes(q);
+    opt.style.display = match ? '' : 'none';
+    if(match) anyVisible = true;
+  });
+  const noMatch = wrap.querySelector('.cselect-no-match');
+  if(noMatch) noMatch.hidden = anyVisible;
+}
+
+function renderCDateGrid(wrap, year, month){
+  const panel = wrap.querySelector('.cdate-panel');
+  const hidden = wrap.querySelector('input[type=hidden]');
+  const selectedIso = hidden.value;
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const todayIso = new Date().toISOString().slice(0,10);
+  let cells = '';
+  for(let i=0;i<firstDay;i++) cells += `<div class="cdate-cell empty"></div>`;
+  for(let d=1; d<=daysInMonth; d++){
+    const iso = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const cls = ['cdate-cell'];
+    if(iso===selectedIso) cls.push('selected');
+    if(iso===todayIso) cls.push('today');
+    cells += `<div class="${cls.join(' ')}" data-date="${iso}">${d}</div>`;
+  }
+  panel.setAttribute('data-view', `${year}-${month}`);
+  panel.innerHTML = `
+    <div class="cdate-header">
+      <button type="button" class="cdate-nav cdate-prev" aria-label="Previous month">‹</button>
+      <span class="cdate-month-label">${CDATE_MONTHS[month]} ${year}</span>
+      <button type="button" class="cdate-nav cdate-next" aria-label="Next month">›</button>
+    </div>
+    <div class="cdate-weekdays">${CDATE_WEEKDAYS.map(w=>`<div class="cdate-weekday">${w}</div>`).join('')}</div>
+    <div class="cdate-grid">${cells}</div>
+    <div class="cdate-footer">
+      <button type="button" class="ghost cdate-today" style="flex:1;">Today</button>
+      <button type="button" class="ghost cdate-clear" style="flex:1;">Clear</button>
+    </div>
+  `;
+}
+
+function openCDatePanel(wrap){
+  const hidden = wrap.querySelector('input[type=hidden]');
+  const iso = hidden.value;
+  let y, m;
+  if(iso){ const parts = iso.split('-').map(Number); y = parts[0]; m = parts[1]-1; }
+  else { const now = new Date(); y = now.getFullYear(); m = now.getMonth(); }
+  renderCDateGrid(wrap, y, m);
+}
+
+document.addEventListener('click', (e)=>{
+  const trigger = e.target.closest('.cselect-trigger');
+  if(trigger){
+    const wrap = trigger.closest('.cselect');
+    const isOpen = wrap.classList.contains('open');
+    closeAllCSelects(); closeAllCDates();
+    if(!isOpen){
+      wrap.classList.add('open');
+      const search = wrap.querySelector('.cselect-search');
+      if(search){ search.value=''; filterCSelectOptions(wrap, ''); search.focus(); }
+    }
+    return;
+  }
+  const option = e.target.closest('.cselect-option');
+  if(option){
+    const wrap = option.closest('.cselect');
+    const hidden = wrap.querySelector('input[type=hidden]');
+    const newValue = option.getAttribute('data-value');
+    if(hidden.value !== newValue){
+      hidden.value = newValue;
+      hidden.dispatchEvent(new Event('change', {bubbles:true}));
+    }
+    wrap.querySelectorAll('.cselect-option.selected').forEach(o=>o.classList.remove('selected'));
+    option.classList.add('selected');
+    wrap.querySelector('.cselect-label').textContent = option.textContent;
+    wrap.classList.remove('open');
+    return;
+  }
+  const dtrigger = e.target.closest('.cdate-trigger');
+  if(dtrigger){
+    const wrap = dtrigger.closest('.cdate');
+    const isOpen = wrap.classList.contains('open');
+    closeAllCSelects(); closeAllCDates();
+    if(!isOpen){
+      wrap.classList.add('open');
+      openCDatePanel(wrap);
+    }
+    return;
+  }
+  const daycell = e.target.closest('.cdate-cell:not(.empty)');
+  if(daycell){
+    const wrap = daycell.closest('.cdate');
+    const hidden = wrap.querySelector('input[type=hidden]');
+    const iso = daycell.getAttribute('data-date');
+    if(hidden.value !== iso){
+      hidden.value = iso;
+      hidden.dispatchEvent(new Event('change', {bubbles:true}));
+    }
+    wrap.querySelector('.cdate-label').textContent = formatDateDisplay(iso);
+    wrap.classList.remove('open');
+    return;
+  }
+  const navBtn = e.target.closest('.cdate-nav');
+  if(navBtn){
+    const wrap = navBtn.closest('.cdate');
+    const panel = wrap.querySelector('.cdate-panel');
+    let [y,m] = panel.getAttribute('data-view').split('-').map(Number);
+    m += navBtn.classList.contains('cdate-next') ? 1 : -1;
+    if(m<0){ m=11; y--; } if(m>11){ m=0; y++; }
+    renderCDateGrid(wrap, y, m);
+    return;
+  }
+  const todayBtn = e.target.closest('.cdate-today');
+  if(todayBtn){
+    const wrap = todayBtn.closest('.cdate');
+    const hidden = wrap.querySelector('input[type=hidden]');
+    const iso = new Date().toISOString().slice(0,10);
+    hidden.value = iso;
+    hidden.dispatchEvent(new Event('change', {bubbles:true}));
+    wrap.querySelector('.cdate-label').textContent = formatDateDisplay(iso);
+    wrap.classList.remove('open');
+    return;
+  }
+  const clearBtn = e.target.closest('.cdate-clear');
+  if(clearBtn){
+    const wrap = clearBtn.closest('.cdate');
+    const hidden = wrap.querySelector('input[type=hidden]');
+    hidden.value = '';
+    hidden.dispatchEvent(new Event('change', {bubbles:true}));
+    const labelEl = wrap.querySelector('.cdate-label');
+    labelEl.textContent = labelEl.getAttribute('data-placeholder') || 'Select date';
+    wrap.classList.remove('open');
+    return;
+  }
+  if(!e.target.closest('.cselect')) closeAllCSelects();
+  if(!e.target.closest('.cdate')) closeAllCDates();
+});
+
+document.addEventListener('input', (e)=>{
+  if(e.target.classList.contains('cselect-search')){
+    filterCSelectOptions(e.target.closest('.cselect'), e.target.value);
+  }
+});
+
+document.addEventListener('keydown', (e)=>{
+  if(e.key==='Escape'){ closeAllCSelects(); closeAllCDates(); }
+});
+
 // ---------- RENDER ----------
 function currentPageTitle(){
   const match = getNavItems().find(item=>item.activeViews.includes(state.view));
@@ -579,9 +833,12 @@ function render(){
           <div class="topbar">
             <div>
               <label>Active group</label>
-              <select class="group-select" onchange="switchGroup(this.value)">
-                ${state.groups.length ? state.groups.map(g=>`<option value="${g.id}" ${g.id===state.activeGroupId?'selected':''}>${esc(g.name)} — ${g.departure_date||'no date'}</option>`).join('') : '<option>No groups yet</option>'}
-              </select>
+              ${customSelectHtml({
+                options: state.groups.map(g=>({value:g.id, label:`${g.name} — ${g.departure_date||'no date'}`})),
+                value: state.activeGroupId,
+                placeholder: 'No groups yet',
+                onChange: 'switchGroup(this.value)'
+              })}
             </div>
           </div>
           <div id="content"></div>
@@ -833,17 +1090,24 @@ function hotelFieldHtml(leg, currentValue, isNew){
     selectValue = 'other';
   }
   const showOther = selectValue === 'other';
+  const options = [
+    ...list.map(h=>({value:h.id, label: h.name + (h.is_default?' (default)':'')})),
+    {value:'other', label:'Other (type manually)'}
+  ];
   return `
-    <select name="${leg}_hotel_select" onchange="toggleHotelOther(this)">
-      <option value="">— Select ${leg==='mecca'?'Mecca':'Madinah'} hotel —</option>
-      ${list.map(h=>`<option value="${h.id}" ${selectValue===h.id?'selected':''}>${esc(h.name)}${h.is_default?' (default)':''}</option>`).join('')}
-      <option value="other" ${showOther?'selected':''}>Other (type manually)</option>
-    </select>
-    <input name="${leg}_hotel_other" placeholder="Hotel name" style="margin-top:6px;${showOther?'':'display:none;'}" value="${showOther?esc(currentValue||''):''}"/>
+    <div class="hotel-field-wrap">
+      ${customSelectHtml({
+        name: `${leg}_hotel_select`,
+        options, value: selectValue,
+        placeholder: `— Select ${leg==='mecca'?'Mecca':'Madinah'} hotel —`,
+        onChange: 'toggleHotelOther(this)'
+      })}
+      <input name="${leg}_hotel_other" placeholder="Hotel name" style="margin-top:6px;${showOther?'':'display:none;'}" value="${showOther?esc(currentValue||''):''}"/>
+    </div>
   `;
 }
 function toggleHotelOther(sel){
-  const otherInput = sel.parentElement.querySelector(`input[name="${sel.name.replace('_select','_other')}"]`);
+  const otherInput = sel.closest('.hotel-field-wrap')?.querySelector(`input[name="${sel.name.replace('_select','_other')}"]`);
   if(!otherInput) return;
   otherInput.style.display = sel.value==='other' ? 'block' : 'none';
 }
@@ -1434,10 +1698,11 @@ function renderTripCollector(){
       <div class="two-col">
         <div>
           <label>Room</label>
-          <select id="collector-room">
-            <option value="">Select room</option>
-            ${state.rooms.map(r=>`<option value="${r.id}">${esc(r.room_number)} (${titleCase(r.hotel_leg)})</option>`).join('')}
-          </select>
+          ${customSelectHtml({
+            id: 'collector-room',
+            options: state.rooms.map(r=>({value:r.id, label:`${r.room_number} (${titleCase(r.hotel_leg)})`})),
+            value: '', placeholder: 'Select room'
+          })}
           <button class="ghost" style="width:100%;margin-top:8px;" onclick="addRoomToCollector()">Add Room</button>
         </div>
         <div>
@@ -1487,12 +1752,14 @@ function renderTripCollector(){
         <div class="stat-value" style="font-size:22px;">${fmt(collectorGrandTotal())}</div>
       </div>
       <div class="collector-payment-fields">
-        <div><label>Method</label><select id="collector-method" onchange="state.tripCollector.method=this.value">
-          <option value="cash" ${tc.method==='cash'?'selected':''}>Cash</option>
-          <option value="bank_transfer" ${tc.method==='bank_transfer'?'selected':''}>Bank transfer</option>
-          <option value="other" ${tc.method==='other'?'selected':''}>Other</option>
-        </select></div>
-        <div><label>Date</label><input id="collector-date" type="date" value="${tc.paidOn}" onchange="state.tripCollector.paidOn=this.value"/></div>
+        <div><label>Method</label>${customSelectHtml({
+          id: 'collector-method',
+          options: [{value:'cash',label:'Cash'},{value:'bank_transfer',label:'Bank transfer'},{value:'other',label:'Other'}],
+          value: tc.method, onChange: 'state.tripCollector.method=this.value'
+        })}</div>
+        <div><label>Date</label>${customDateHtml({
+          id: 'collector-date', value: tc.paidOn, onChange: 'state.tripCollector.paidOn=this.value'
+        })}</div>
         <div><label>Reference</label><input id="collector-reference" value="${esc(tc.reference||'')}" oninput="state.tripCollector.reference=this.value" placeholder="Receipt no."/></div>
       </div>
       <button class="primary" style="padding:12px 24px;" onclick="saveTripPayments()">Confirm & Save Payment</button>
@@ -1636,8 +1903,8 @@ function renderTripSummary(){
     <h2 style="margin-bottom:14px;">Trip payment summary</h2>
     <div class="card" style="margin-bottom:16px;max-width:420px;">
       <div class="two-col">
-        <div class="field"><label>From</label><input type="date" value="${fr.dateFrom}" onchange="setTripSummaryDate('dateFrom',this.value)"/></div>
-        <div class="field"><label>To</label><input type="date" value="${fr.dateTo}" onchange="setTripSummaryDate('dateTo',this.value)"/></div>
+        <div class="field"><label>From</label>${customDateHtml({ value: fr.dateFrom, onChange: "setTripSummaryDate('dateFrom',this.value)" })}</div>
+        <div class="field"><label>To</label>${customDateHtml({ value: fr.dateTo, onChange: "setTripSummaryDate('dateTo',this.value)" })}</div>
       </div>
     </div>
     ${rows.length===0
@@ -1657,8 +1924,8 @@ function renderTripDateReport(){
     <h2 style="margin-bottom:14px;">Date-wise collection</h2>
     <div class="card" style="margin-bottom:16px;max-width:420px;">
       <div class="two-col">
-        <div class="field"><label>From</label><input type="date" value="${fr.dateFrom}" onchange="setTripDateReportDate('dateFrom',this.value)"/></div>
-        <div class="field"><label>To</label><input type="date" value="${fr.dateTo}" onchange="setTripDateReportDate('dateTo',this.value)"/></div>
+        <div class="field"><label>From</label>${customDateHtml({ value: fr.dateFrom, onChange: "setTripDateReportDate('dateFrom',this.value)" })}</div>
+        <div class="field"><label>To</label>${customDateHtml({ value: fr.dateTo, onChange: "setTripDateReportDate('dateTo',this.value)" })}</div>
       </div>
     </div>
     ${rows.length===0
@@ -1691,9 +1958,11 @@ function renderStaff(){
             <tr>
               <td>${esc(s.full_name||'—')} ${isSelf?'<span class="pill ok">You</span>':''} ${s.role==='super_admin'?'<span class="pill warn">Super Admin</span>':''}</td>
               <td data-label="Role">
-                <select onchange="updateStaffRole('${s.id}', this.value)" ${locked?'disabled':''}>
-                  ${options.map(([val,label])=>`<option value="${val}" ${s.role===val?'selected':''}>${label}</option>`).join('')}
-                </select>
+                ${customSelectHtml({
+                  options: options.map(([val,label])=>({value:val, label})),
+                  value: s.role, disabled: locked, searchable: false,
+                  onChange: `updateStaffRole('${s.id}', this.value)`
+                })}
                 ${(!isSelf && !canEdit) ? '<div style="font-size:11px;color:#8a8168;margin-top:4px;">Only a super admin can change this.</div>' : ''}
               </td>
             </tr>
@@ -1725,9 +1994,11 @@ function renderSettings(){
           <h3 style="text-transform:capitalize;margin-bottom:12px;">${esc(role)}</h3>
           <div class="field">
             <label>Default landing page</label>
-            <select onchange="updateRoleDefaultView('${role}', this.value)">
-              ${permitted.map(d=>`<option value="${d.key}" ${(rs.default_view||'dashboard')===d.key?'selected':''}>${esc(d.label)}</option>`).join('')}
-            </select>
+            ${customSelectHtml({
+              options: permitted.map(d=>({value:d.key, label:d.label})),
+              value: rs.default_view||'dashboard', searchable: false,
+              onChange: `updateRoleDefaultView('${role}', this.value)`
+            })}
           </div>
           <label>Visible menu items</label>
           <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
@@ -1761,9 +2032,11 @@ function renderSettings(){
       </p>
       <div class="field">
         <label>What to import</label>
-        <select id="bulk-import-entity">
-          ${Object.entries(BULK_IMPORT_ENTITY_LABELS).map(([k,label])=>`<option value="${k}">${esc(label)}</option>`).join('')}
-        </select>
+        ${customSelectHtml({
+          id: 'bulk-import-entity',
+          options: Object.entries(BULK_IMPORT_ENTITY_LABELS).map(([k,label])=>({value:k, label})),
+          searchable: false
+        })}
       </div>
       <button class="gold" style="width:100%;" onclick="openBulkImportFromSettings()">Open bulk import</button>
     </div>
@@ -1807,8 +2080,8 @@ function renderModal(){
       <form onsubmit="saveGroup(event, ${data.id?`'${data.id}'`:'null'})">
         <div class="field"><label>Group name</label><input name="name" value="${esc(data.name||'')}" required/></div>
         <div class="two-col">
-          <div class="field"><label>Departure date</label><input type="date" name="departure_date" value="${data.departure_date||''}"/></div>
-          <div class="field"><label>Return date</label><input type="date" name="return_date" value="${data.return_date||''}"/></div>
+          <div class="field"><label>Departure date</label>${customDateHtml({ name:'departure_date', value: data.departure_date||'' })}</div>
+          <div class="field"><label>Return date</label>${customDateHtml({ name:'return_date', value: data.return_date||'' })}</div>
         </div>
         <div class="field"><label>Mecca hotel</label>${hotelFieldHtml('mecca', data.mecca_hotel, !data.id)}</div>
         <div class="field"><label>Madinah hotel</label>${hotelFieldHtml('madinah', data.madinah_hotel, !data.id)}</div>
@@ -1888,12 +2161,16 @@ function renderModal(){
         </div>
         <div class="two-col">
           <div class="field"><label>Gender</label>
-            <select name="gender"><option value="male" ${data.gender==='male'?'selected':''}>Male</option><option value="female" ${data.gender==='female'?'selected':''}>Female</option></select>
+            ${customSelectHtml({ name:'gender', options:[{value:'male',label:'Male'},{value:'female',label:'Female'}], value:data.gender, searchable:false })}
           </div>
           <div class="field"><label>Age</label><input type="number" min="0" max="120" name="age" value="${data.age??''}" placeholder="e.g. 34"/></div>
         </div>
         <div class="field"><label>Package</label>
-          <select name="package_id"><option value="">—</option>${state.packages.map(p=>`<option value="${p.id}" ${data.package_id===p.id?'selected':''}>${esc(p.name)} (${fmt(p.price)})</option>`).join('')}</select>
+          ${customSelectHtml({
+            name: 'package_id',
+            options: [{value:'',label:'—'}, ...state.packages.map(p=>({value:p.id, label:`${p.name} (${fmt(p.price)})`}))],
+            value: data.package_id||''
+          })}
         </div>
         <div class="field"><label>Family code (group family members together)</label><input name="family_code" value="${esc(data.family_code||'')}"/></div>
         <div class="two-col">
@@ -1929,12 +2206,12 @@ function renderModal(){
       <h3>Add room</h3>
       <form onsubmit="saveRoom(event)">
         <div class="two-col">
-          <div class="field"><label>Leg</label><select name="hotel_leg"><option value="mecca">Mecca</option><option value="madinah">Madinah</option></select></div>
+          <div class="field"><label>Leg</label>${customSelectHtml({ name:'hotel_leg', options:[{value:'mecca',label:'Mecca'},{value:'madinah',label:'Madinah'}], searchable:false })}</div>
           <div class="field"><label>Room number</label><input name="room_number" required/></div>
         </div>
         <div class="two-col">
           <div class="field"><label>Capacity</label><input type="number" name="capacity" value="4"/></div>
-          <div class="field"><label>Type</label><select name="gender"><option value="family">Family</option><option value="male">Male only</option><option value="female">Female only</option></select></div>
+          <div class="field"><label>Type</label>${customSelectHtml({ name:'gender', options:[{value:'family',label:'Family'},{value:'male',label:'Male only'},{value:'female',label:'Female only'}], searchable:false })}</div>
         </div>
         <div style="display:flex;gap:8px;margin-top:16px;">
           <button type="submit" class="primary" style="flex:1">Save</button>
@@ -1962,7 +2239,7 @@ function renderModal(){
       <h3>Add bus</h3>
       <form onsubmit="saveBus(event)">
         <div class="two-col">
-          <div class="field"><label>Leg</label><select name="leg"><option value="airport_transfer">Airport transfer</option><option value="mecca_madinah">Mecca ↔ Madinah</option><option value="ziyarat">Ziyarat</option></select></div>
+          <div class="field"><label>Leg</label>${customSelectHtml({ name:'leg', options:[{value:'airport_transfer',label:'Airport transfer'},{value:'mecca_madinah',label:'Mecca ↔ Madinah'},{value:'ziyarat',label:'Ziyarat'}], searchable:false })}</div>
           <div class="field"><label>Bus number</label><input name="bus_number" required/></div>
         </div>
         <div class="two-col">
@@ -1995,16 +2272,19 @@ function renderModal(){
       <h3>Record payment</h3>
       <form onsubmit="savePayment(event)">
         <div class="field"><label>Haji</label>
-          <select name="haji_id" required>${state.hajis.map(h=>{
-            const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; const bal=due-hajiPaid(h.id);
-            return `<option value="${h.id}">${esc(h.full_name)} — balance ${fmt(bal)}</option>`;
-          }).join('')}</select>
+          ${customSelectHtml({
+            name: 'haji_id', required: true,
+            options: state.hajis.map(h=>{
+              const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; const bal=due-hajiPaid(h.id);
+              return {value:h.id, label:`${h.full_name} — balance ${fmt(bal)}`};
+            })
+          })}
         </div>
         <div class="two-col">
           <div class="field"><label>Amount (MVR)</label><input type="number" step="0.01" name="amount" required/></div>
-          <div class="field"><label>Date</label><input type="date" name="paid_on" value="${new Date().toISOString().slice(0,10)}"/></div>
+          <div class="field"><label>Date</label>${customDateHtml({ name:'paid_on', value: new Date().toISOString().slice(0,10) })}</div>
         </div>
-        <div class="field"><label>Method</label><select name="method"><option value="cash">Cash</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></div>
+        <div class="field"><label>Method</label>${customSelectHtml({ name:'method', options:[{value:'cash',label:'Cash'},{value:'bank_transfer',label:'Bank transfer'},{value:'other',label:'Other'}], searchable:false })}</div>
         <div class="field"><label>Reference</label><input name="reference" placeholder="Receipt / slip no."/></div>
         <div class="field"><label>Notes</label><input name="notes"/></div>
         <div style="display:flex;gap:8px;margin-top:16px;">
