@@ -33,7 +33,10 @@
     --radius:10px;
   }
   *{box-sizing:border-box;}
-  body{margin:0;background:var(--sand);color:var(--ink);font-family:'Inter',sans-serif;font-size:14px;}
+  body{margin:0;background:var(--sand);color:var(--ink);font-family:'Inter',sans-serif;font-size:14px;overscroll-behavior-y:contain;}
+  button,.nav-item,.bottom-nav-item,select,input,.pill{-webkit-tap-highlight-color:transparent;}
+  .nav-item,.bottom-nav-item{user-select:none;-webkit-user-select:none;}
+  .nav-item:active,.bottom-nav-item:active{opacity:.7;}
   h1,h2,h3{font-family:'Fraunces',serif;font-weight:600;margin:0;color:var(--teal);}
   .mono{font-family:'IBM Plex Mono',monospace;}
   button{font-family:'Inter',sans-serif;cursor:pointer;border:none;border-radius:var(--radius);padding:8px 14px;font-size:13px;font-weight:600;transition:transform .08s ease, background .15s ease;}
@@ -63,12 +66,15 @@
   #sidebar{width:210px;background:var(--teal);color:var(--sand);padding:22px 14px;flex-shrink:0;display:flex;flex-direction:column;position:relative;}
   #sidebar h1{color:var(--sand);font-size:22px;letter-spacing:.02em;}
   #sidebar .tagline{font-size:11px;color:var(--gold-soft);margin-top:2px;margin-bottom:26px;font-style:italic;}
-  .nav-item{padding:9px 12px;border-radius:8px;margin-bottom:3px;cursor:pointer;font-weight:500;color:#cfe0dc;}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;margin-bottom:3px;cursor:pointer;font-weight:500;color:#cfe0dc;}
   .nav-item:hover{background:rgba(255,255,255,.06);}
   .nav-item.active{background:var(--gold);color:#2b1d05;font-weight:700;}
+  .nav-icon{display:flex;flex-shrink:0;opacity:.9;}
+  #main-wrap{flex:1;display:flex;flex-direction:column;min-width:0;}
   #main{flex:1;padding:26px 34px;max-width:1200px;min-width:0;}
   .topbar{display:flex;align-items:center;gap:14px;margin-bottom:22px;}
   .group-select{max-width:280px;}
+  .mobile-topbar{display:none;}
   .grid{display:grid;gap:14px;}
   .grid-4{grid-template-columns:repeat(4,1fr);}
   .sidebar-close-btn{display:none;position:absolute;top:14px;right:14px;background:transparent;border:none;color:var(--sand);font-size:20px;line-height:1;cursor:pointer;padding:4px;}
@@ -127,25 +133,37 @@
       transition:background .25s ease;z-index:65;
     }
     #app.nav-open .sidebar-backdrop{background:rgba(20,20,18,.45);pointer-events:auto;}
-    #main{padding:16px 16px calc(72px + env(safe-area-inset-bottom, 0px));}
+    #main{padding:16px 16px calc(76px + env(safe-area-inset-bottom, 0px));}
     .grid-4{grid-template-columns:repeat(2,1fr);}
     .two-col{grid-template-columns:1fr;}
     .auth-card{width:92vw;max-width:400px;padding:28px 22px;}
-    input,select,textarea{font-size:16px;} /* prevent iOS auto-zoom on focus */
+    input,select,textarea{font-size:16px;padding:10px 12px;} /* prevent iOS auto-zoom on focus + bigger tap area */
+    button{padding:10px 14px;min-height:40px;}
     .row-actions{flex-wrap:wrap;}
     .collector-payment-fields{grid-template-columns:1fr;min-width:0;}
     .collector-footer{position:static;flex-direction:column;align-items:stretch;box-shadow:none;}
     .trip-row .who{min-width:100%;}
+    .mobile-topbar{
+      display:flex;align-items:center;justify-content:center;
+      position:sticky;top:0;z-index:40;
+      background:var(--teal);color:var(--sand);
+      padding:14px 16px;padding-top:calc(14px + env(safe-area-inset-top, 0px));
+      font-family:'Fraunces',serif;font-weight:600;font-size:17px;letter-spacing:.01em;
+      box-shadow:0 2px 10px rgba(20,20,18,.15);
+    }
     .bottom-nav{
       display:flex;position:fixed;left:0;right:0;bottom:0;z-index:55;
       background:var(--teal);border-top:1px solid rgba(255,255,255,.1);
       padding-bottom:env(safe-area-inset-bottom, 0px);
     }
     .bottom-nav-item{
-      flex:1;text-align:center;padding:10px 4px 8px;font-size:11px;font-weight:600;
-      color:#cfe0dc;cursor:pointer;letter-spacing:.01em;
+      flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+      min-height:54px;text-align:center;padding:8px 4px;font-size:10.5px;font-weight:600;
+      color:#cfe0dc;cursor:pointer;letter-spacing:.01em;-webkit-tap-highlight-color:transparent;
     }
     .bottom-nav-item.active{color:var(--gold-soft);}
+    .bottom-nav-item svg{opacity:.85;}
+    .bottom-nav-item.active svg{opacity:1;}
   }
 
   @media (max-width:600px){
@@ -280,6 +298,24 @@ function canRole(action, role){
   return (rules[action]||[]).includes(role);
 }
 function can(action){ return canRole(action, state.myRole); }
+
+function icon(name, size){
+  size = size || 20;
+  const attrs = `width="${size}" height="${size}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"`;
+  const paths = {
+    dashboard: '<rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="11" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="11" width="6" height="6" rx="1.5"/><rect x="11" y="11" width="6" height="6" rx="1.5"/>',
+    groups: '<circle cx="7" cy="7" r="3"/><circle cx="13" cy="7" r="3"/><path d="M2 17c0-3 2.5-5 5-5s5 2 5 5"/><path d="M8 17c0-3 2.5-5 5-5s5 2 5 5"/>',
+    hajis: '<circle cx="10" cy="6.5" r="3.2"/><path d="M3.5 17c0-4 3-7 6.5-7s6.5 3 6.5 7"/>',
+    rooms: '<rect x="3" y="3" width="12" height="14" rx="1.2"/><circle cx="12" cy="10" r="1"/>',
+    buses: '<rect x="2.5" y="4" width="15" height="10" rx="2"/><line x1="2.5" y1="9" x2="17.5" y2="9"/><circle cx="6" cy="16" r="1.4"/><circle cx="14" cy="16" r="1.4"/>',
+    payments: '<rect x="2.5" y="4.5" width="15" height="11" rx="1.8"/><line x1="2.5" y1="8.5" x2="17.5" y2="8.5"/>',
+    tripPayments: '<line x1="5.5" y1="3" x2="5.5" y2="17"/><path d="M5.5 4h9l-2.8 3 2.8 3h-9"/>',
+    staff: '<path d="M10 2.5l5.5 2v4.5c0 4-2.3 6.3-5.5 6.8-3.2-.5-5.5-2.8-5.5-6.8V4.5l5.5-2z"/>',
+    settings: '<line x1="5" y1="3" x2="5" y2="17"/><circle cx="5" cy="7" r="1.8"/><line x1="10" y1="3" x2="10" y2="17"/><circle cx="10" cy="13" r="1.8"/><line x1="15" y1="3" x2="15" y2="17"/><circle cx="15" cy="9" r="1.8"/>',
+    more: '<circle cx="4" cy="10" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="16" cy="10" r="1.5"/>',
+  };
+  return `<svg ${attrs}>${paths[name]||''}</svg>`;
+}
 
 const NAV_ITEM_DEFS = [
   { key:'dashboard', label:'Dashboard', activeViews:['dashboard'], onclick:"setView('dashboard')", permitted: ()=>true },
@@ -493,6 +529,10 @@ function showNotice(message, kind){
 function closeNotice(){ document.getElementById('notice-root').innerHTML = ''; }
 
 // ---------- RENDER ----------
+function currentPageTitle(){
+  const match = getNavItems().find(item=>item.activeViews.includes(state.view));
+  return match ? match.label : 'Rihla';
+}
 function render(){
   if(!state.session){ renderAuth(); return; }
   if(state.isHaji){ renderHajiDashboard(); return; }
@@ -505,25 +545,28 @@ function render(){
         <h1>Rihla</h1>
         <div class="tagline">Umrah group operations</div>
         <div style="color:var(--gold-soft);font-size:11px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em;">Signed in as ${state.myRole||'—'}</div>
-        ${navItems.map(item=>`<div class="nav-item ${item.activeViews.includes(state.view)?'active':''}" onclick="${item.onclick}">${item.label}</div>`).join('')}
+        ${navItems.map(item=>`<div class="nav-item ${item.activeViews.includes(state.view)?'active':''}" onclick="${item.onclick}"><span class="nav-icon">${icon(item.key,18)}</span><span>${item.label}</span></div>`).join('')}
         <div style="flex:1"></div>
         ${state.canInstall ? `<button class="gold install-btn" onclick="installApp()">⭳ Install app</button>` : ''}
         <button class="ghost" onclick="signOut()" style="margin-top:10px;">Sign out</button>
       </div>
-      <div id="main">
-        <div class="topbar">
-          <div>
-            <label>Active group</label>
-            <select class="group-select" onchange="switchGroup(this.value)">
-              ${state.groups.length ? state.groups.map(g=>`<option value="${g.id}" ${g.id===state.activeGroupId?'selected':''}>${esc(g.name)} — ${g.departure_date||'no date'}</option>`).join('') : '<option>No groups yet</option>'}
-            </select>
+      <div id="main-wrap">
+        <div class="mobile-topbar">${esc(currentPageTitle())}</div>
+        <div id="main">
+          <div class="topbar">
+            <div>
+              <label>Active group</label>
+              <select class="group-select" onchange="switchGroup(this.value)">
+                ${state.groups.length ? state.groups.map(g=>`<option value="${g.id}" ${g.id===state.activeGroupId?'selected':''}>${esc(g.name)} — ${g.departure_date||'no date'}</option>`).join('') : '<option>No groups yet</option>'}
+              </select>
+            </div>
           </div>
+          <div id="content"></div>
         </div>
-        <div id="content"></div>
       </div>
       <nav class="bottom-nav">
-        ${navItems.slice(0,4).map(item=>`<div class="bottom-nav-item ${item.activeViews.includes(state.view)?'active':''}" onclick="${item.onclick}">${item.label}</div>`).join('')}
-        ${navItems.length>4 ? `<div class="bottom-nav-item ${state.mobileNavOpen?'active':''}" onclick="toggleNav()">More</div>` : ''}
+        ${navItems.slice(0,4).map(item=>`<div class="bottom-nav-item ${item.activeViews.includes(state.view)?'active':''}" onclick="${item.onclick}">${icon(item.key,22)}<span>${item.label}</span></div>`).join('')}
+        ${navItems.length>4 ? `<div class="bottom-nav-item ${state.mobileNavOpen?'active':''}" onclick="toggleNav()">${icon('more',22)}<span>More</span></div>` : ''}
       </nav>
     </div>
     ${state.modal ? renderModal() : ''}
