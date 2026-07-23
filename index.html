@@ -929,8 +929,7 @@ function renderHajis(){
   if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
   return `
     <div class="toolbar">
-      ${can('manageHajis') ? `<button class="primary" onclick="openModal('haji')">+ Add haji</button>
-      <button class="gold" onclick="openModal('bulkImport')">Bulk import (CSV)</button>` : ''}
+      ${can('manageHajis') ? `<button class="primary" onclick="openModal('haji')">+ Add haji</button>` : ''}
     </div>
     <div class="card table-wrap">
       <table>
@@ -1067,6 +1066,25 @@ const BULK_IMPORT_DEFS = {
   }
 };
 
+const BULK_IMPORT_ENTITY_LABELS = {
+  hajis: 'Hajis (pilgrims)',
+  rooms: 'Rooms',
+  buses: 'Buses',
+  hotels: 'Hotels',
+  tripTypes: 'Ziyarat trip types',
+  packages: 'Packages'
+};
+const BULK_IMPORT_GROUP_SCOPED = new Set(['hajis','rooms','buses','tripTypes','packages']);
+
+function openBulkImportFromSettings(){
+  const entity = document.getElementById('bulk-import-entity').value;
+  if(BULK_IMPORT_GROUP_SCOPED.has(entity) && !state.activeGroupId){
+    showNotice('Select an active group first (Groups tab), then come back to Settings.', 'error');
+    return;
+  }
+  openModal('bulkImport', {entity, groupId: state.activeGroupId});
+}
+
 async function bulkImportCSV(entity, groupId){
   entity = entity || 'hajis';
   const def = BULK_IMPORT_DEFS[entity];
@@ -1095,19 +1113,12 @@ async function bulkImportCSV(entity, groupId){
   if(entity==='hotels'){
     const { data } = await sb.from('hotels').select('*').order('name');
     state.hotels = data || [];
-    openModal('hotels');
-  } else if(entity==='tripTypes'){
-    const { data } = await sb.from('trip_types').select('*').eq('group_id', state.activeGroupId).order('name');
-    state.tripTypes = data || [];
-    openModal('tripTypes');
-  } else if(entity==='packages'){
-    const { data } = await sb.from('packages').select('*').eq('group_id', groupId);
-    if(state.activeGroupId===groupId) state.packages = data || [];
-    openModal('packages', {groupId});
-    render();
-  } else {
-    closeModal(); await loadGroupData(); render();
+  } else if(state.activeGroupId){
+    await loadGroupData();
   }
+  closeModal();
+  showNotice(`Imported ${rows.length} ${BULK_IMPORT_ENTITY_LABELS[entity]||entity} record${rows.length===1?'':'s'}.`, 'success');
+  render();
 }
 
 // ---------- ROOMS ----------
@@ -1116,8 +1127,7 @@ function renderRooms(){
   const legs = ['mecca','madinah'];
   return `
     <div class="toolbar">
-      ${can('manageRooms') ? `<button class="primary" onclick="openModal('room')">+ Add room</button>
-      <button class="ghost" onclick="openModal('bulkImport',{entity:'rooms'})">Bulk import (CSV)</button>` : ''}
+      ${can('manageRooms') ? `<button class="primary" onclick="openModal('room')">+ Add room</button>` : ''}
     </div>
     ${legs.map(leg=>{
       const rooms = state.rooms.filter(r=>r.hotel_leg===leg);
@@ -1172,8 +1182,7 @@ function renderBuses(){
   const legs = [['airport_transfer','Airport transfer'],['mecca_madinah','Mecca ↔ Madinah'],['ziyarat','Ziyarat']];
   return `
     <div class="toolbar">
-      ${can('manageBuses') ? `<button class="primary" onclick="openModal('bus')">+ Add bus</button>
-      <button class="ghost" onclick="openModal('bulkImport',{entity:'buses'})">Bulk import (CSV)</button>` : ''}
+      ${can('manageBuses') ? `<button class="primary" onclick="openModal('bus')">+ Add bus</button>` : ''}
     </div>
     ${legs.map(([leg,label])=>{
       const buses = state.buses.filter(b=>b.leg===leg);
@@ -1742,6 +1751,22 @@ function renderSettings(){
         `).join('')}
       </div>
     </div>
+    <div class="card" style="margin-bottom:16px;max-width:520px;">
+      <h3 style="margin-bottom:6px;">Bulk data import</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:10px;">
+        Paste CSV data to add many records at once.
+        ${state.activeGroupId
+          ? `Group-scoped imports (hajis, rooms, buses, trip types, packages) apply to the active group — <strong>${esc(state.groups.find(g=>g.id===state.activeGroupId)?.name||'')}</strong>.`
+          : `No active group selected — pick one under Groups first if you're importing hajis, rooms, buses, trip types, or packages.`}
+      </p>
+      <div class="field">
+        <label>What to import</label>
+        <select id="bulk-import-entity">
+          ${Object.entries(BULK_IMPORT_ENTITY_LABELS).map(([k,label])=>`<option value="${k}">${esc(label)}</option>`).join('')}
+        </select>
+      </div>
+      <button class="gold" style="width:100%;" onclick="openBulkImportFromSettings()">Open bulk import</button>
+    </div>
   `;
 }
 async function toggleHajiSection(key, checked){
@@ -1816,10 +1841,7 @@ function renderModal(){
           </div>
         </div>
       `).join('')}
-      <div style="display:flex;gap:8px;">
-        <button class="ghost" style="flex:1" onclick="openModal('bulkImport',{entity:'hotels'})">Bulk import (CSV)</button>
-        <button class="ghost" style="flex:1" onclick="closeModal()">Close</button>
-      </div>
+      <button class="ghost" style="width:100%;" onclick="closeModal()">Close</button>
     `;
   } else if(type==='packages'){
     const gid = data.groupId;
@@ -1835,7 +1857,6 @@ function renderModal(){
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
         <button class="gold" style="flex:1" onclick="addPackage('${gid}')">Add package</button>
-        <button class="ghost" onclick="openModal('bulkImport',{entity:'packages',groupId:'${gid}'})">Bulk import</button>
         <button class="ghost" onclick="closeModal()">Close</button>
       </div>
     `;
@@ -1853,7 +1874,6 @@ function renderModal(){
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
         <button class="gold" style="flex:1" onclick="addTripType()">Add trip type</button>
-        <button class="ghost" onclick="openModal('bulkImport',{entity:'tripTypes'})">Bulk import</button>
         <button class="ghost" onclick="closeModal()">Close</button>
       </div>
     `;
