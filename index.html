@@ -171,6 +171,24 @@
     .modal{width:100%;max-width:100%;height:100%;max-height:100%;border-radius:0;padding:20px 16px 28px;}
     .stat-value{font-size:22px;}
     h2{font-size:19px;}
+
+    /* Responsive tables: rows become stacked cards instead of scrolling sideways */
+    .table-wrap{overflow-x:visible;}
+    .table-wrap table{border-collapse:separate;border-spacing:0;}
+    .table-wrap thead{display:none;}
+    .table-wrap tr{
+      display:block;background:#fffdf7;border:1px solid var(--line);border-radius:10px;
+      padding:12px 14px;margin-bottom:10px;
+    }
+    .table-wrap tr:last-child{margin-bottom:0;}
+    .table-wrap td{display:block;border:none;padding:5px 0;vertical-align:top;}
+    .table-wrap td[data-label]::before{
+      content:attr(data-label);display:block;font-size:10.5px;text-transform:uppercase;
+      letter-spacing:.05em;color:#6b6252;font-weight:700;margin-bottom:2px;
+    }
+    .table-wrap td:first-child{padding-top:0;}
+    .table-wrap td:last-child{padding-bottom:0;}
+    .table-wrap .row-actions{margin-top:4px;}
   }
 
   @media (max-width:420px){
@@ -713,8 +731,8 @@ function renderHajiDashboard(){
                   const trips = state.myPaymentTripItems.filter(t=>t.payment_id===p.id);
                   return `<tr>
                     <td>${p.paid_on}${trips.length?`<div style="font-size:11px;color:#8a8168;">${trips.map(t=>esc(t.trip_name)).join(', ')}</div>`:''}</td>
-                    <td>${fmt(p.amount)}</td>
-                    <td style="text-transform:capitalize;">${p.method.replace('_',' ')}</td>
+                    <td data-label="Amount">${fmt(p.amount)}</td>
+                    <td data-label="Method" style="text-transform:capitalize;">${p.method.replace('_',' ')}</td>
                   </tr>`;
                 }).join('') || `<tr><td colspan="3" class="empty">No payments recorded yet.</td></tr>`}
               </tbody>
@@ -788,11 +806,11 @@ function renderGroups(){
           ${state.groups.map(g=>`
             <tr>
               <td><strong>${esc(g.name)}</strong></td>
-              <td>${g.departure_date||'—'}</td>
-              <td>${g.return_date||'—'}</td>
-              <td>${esc(g.mecca_hotel||'—')}</td>
-              <td>${esc(g.madinah_hotel||'—')}</td>
-              <td><button class="ghost" onclick="openModal('packages',{groupId:'${g.id}'})" ${can('managePackages')?'':'disabled'}>Manage${g.id===state.activeGroupId?` <span class="badge-count">${state.packages.length}</span>`:''}</button></td>
+              <td data-label="Departure">${g.departure_date||'—'}</td>
+              <td data-label="Return">${g.return_date||'—'}</td>
+              <td data-label="Mecca hotel">${esc(g.mecca_hotel||'—')}</td>
+              <td data-label="Madinah hotel">${esc(g.madinah_hotel||'—')}</td>
+              <td data-label="Packages"><button class="ghost" onclick="openModal('packages',{groupId:'${g.id}'})" ${can('managePackages')?'':'disabled'}>Manage${g.id===state.activeGroupId?` <span class="badge-count">${state.packages.length}</span>`:''}</button></td>
               <td class="row-actions">${can('manageGroups')?`<button class="ghost" onclick="openModal('group', state.groups.find(x=>x.id==='${g.id}'))">Edit</button>`:''}</td>
             </tr>
           `).join('') || `<tr><td colspan="7" class="empty">No groups yet — create your first Umrah batch.</td></tr>`}
@@ -925,13 +943,13 @@ function renderHajis(){
             const bal = due - paid;
             return `<tr>
               <td><strong>${esc(h.full_name)}</strong> ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</td>
-              <td class="mono">${esc(h.passport_no||'—')}</td>
-              <td>${esc(h.phone||'—')}</td>
-              <td>${titleCase(h.gender)||'—'}</td>
-              <td>${h.age??'—'}</td>
-              <td>${pkg?esc(pkg.name):'—'}</td>
-              <td><span class="pill ${bal<=0?'ok':'bad'}">${fmt(bal)}</span></td>
-              <td>${esc(h.family_code||'—')}</td>
+              <td class="mono" data-label="Passport">${esc(h.passport_no||'—')}</td>
+              <td data-label="Phone">${esc(h.phone||'—')}</td>
+              <td data-label="Gender">${titleCase(h.gender)||'—'}</td>
+              <td data-label="Age">${h.age??'—'}</td>
+              <td data-label="Package">${pkg?esc(pkg.name):'—'}</td>
+              <td data-label="Balance"><span class="pill ${bal<=0?'ok':'bad'}">${fmt(bal)}</span></td>
+              <td data-label="Family code">${esc(h.family_code||'—')}</td>
               <td class="row-actions">${can('manageHajis')?`<button class="ghost" onclick="openModal('haji', hajiById('${h.id}'))">Edit</button>`:''}</td>
             </tr>`;
           }).join('') || `<tr><td colspan="9" class="empty">No hajis in this group yet.</td></tr>`}
@@ -1105,11 +1123,11 @@ function renderPayments(){
             const trips = tripsForPayment(p.id);
             return `<tr>
               <td>${esc(h?.full_name||'Unknown')}${trips.length?`<div style="font-size:11px;color:#8a8168;">${trips.map(t=>esc(t.trip_name)).join(', ')}</div>`:''}</td>
-              <td>${fmt(p.amount)}</td>
-              <td style="text-transform:capitalize;">${p.method.replace('_',' ')}</td>
-              <td>${p.paid_on}</td>
-              <td>${esc(p.reference||'—')}</td>
-              <td><button class="ghost" onclick="printReceipt('${p.id}')">Print receipt</button></td>
+              <td data-label="Amount">${fmt(p.amount)}</td>
+              <td data-label="Method" style="text-transform:capitalize;">${p.method.replace('_',' ')}</td>
+              <td data-label="Date">${p.paid_on}</td>
+              <td data-label="Reference">${esc(p.reference||'—')}</td>
+              <td class="row-actions"><button class="ghost" onclick="printReceipt('${p.id}')">Print receipt</button></td>
             </tr>`;
           }).join('') || `<tr><td colspan="6" class="empty">No payments recorded yet.</td></tr>`}
         </tbody>
@@ -1478,8 +1496,8 @@ function renderReportByDate(rows){
         <table>
           <thead><tr><th>Trip</th><th>Paid</th><th>FOC</th><th>Total</th><th>Amount</th></tr></thead>
           <tbody>
-            ${tripRows.map(t=>`<tr><td>${esc(t.name)}</td><td>${t.paid}</td><td>${t.foc}</td><td>${t.total}</td><td>${fmt(t.amount)}</td></tr>`).join('')}
-            <tr><td colspan="3"><strong>Day total</strong></td><td><strong>${dayTotalCount}</strong></td><td><strong>${fmt(dayTotalAmount)}</strong></td></tr>
+            ${tripRows.map(t=>`<tr><td>${esc(t.name)}</td><td data-label="Paid">${t.paid}</td><td data-label="FOC">${t.foc}</td><td data-label="Total">${t.total}</td><td data-label="Amount">${fmt(t.amount)}</td></tr>`).join('')}
+            <tr><td colspan="3"><strong>Day total</strong></td><td data-label="Total"><strong>${dayTotalCount}</strong></td><td data-label="Amount"><strong>${fmt(dayTotalAmount)}</strong></td></tr>
           </tbody>
         </table>
       </div>
@@ -1551,7 +1569,7 @@ function renderStaff(){
             return `
             <tr>
               <td>${esc(s.full_name||'—')} ${isSelf?'<span class="pill ok">You</span>':''} ${s.role==='super_admin'?'<span class="pill warn">Super Admin</span>':''}</td>
-              <td>
+              <td data-label="Role">
                 <select onchange="updateStaffRole('${s.id}', this.value)" ${locked?'disabled':''}>
                   ${options.map(([val,label])=>`<option value="${val}" ${s.role===val?'selected':''}>${label}</option>`).join('')}
                 </select>
