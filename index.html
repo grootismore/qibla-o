@@ -934,13 +934,14 @@ function renderHajis(){
     </div>
     <div class="card table-wrap">
       <table>
-        <thead><tr><th>Name</th><th>Passport</th><th>Phone</th><th>Gender</th><th>Age</th><th>Package</th><th>Balance</th><th>Family code</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Passport</th><th>Phone</th><th>Gender</th><th>Age</th><th>Package</th><th>Balance</th><th>Family code</th><th>Flight</th><th>Q no.</th><th>Group no.</th><th>Room</th><th></th></tr></thead>
         <tbody>
           ${state.hajis.map(h=>{
             const pkg = packageById(h.package_id);
             const due = pkg?Number(pkg.price):0;
             const paid = hajiPaid(h.id);
             const bal = due - paid;
+            const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
             return `<tr>
               <td><strong>${esc(h.full_name)}</strong> ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</td>
               <td class="mono" data-label="Passport">${esc(h.passport_no||'—')}</td>
@@ -950,9 +951,13 @@ function renderHajis(){
               <td data-label="Package">${pkg?esc(pkg.name):'—'}</td>
               <td data-label="Balance"><span class="pill ${bal<=0?'ok':'bad'}">${fmt(bal)}</span></td>
               <td data-label="Family code">${esc(h.family_code||'—')}</td>
+              <td data-label="Flight">${esc(h.flight_number||'—')}</td>
+              <td data-label="Q no.">${esc(h.q_number||'—')}</td>
+              <td data-label="Group no.">${esc(h.group_number||'—')}</td>
+              <td data-label="Room">${room?`${esc(room.room_number)} <span style="color:#8a8168;text-transform:capitalize;">(${room.hotel_leg})</span>`:'—'}</td>
               <td class="row-actions">${can('manageHajis')?`<button class="ghost" onclick="openModal('haji', hajiById('${h.id}'))">Edit</button>`:''}</td>
             </tr>`;
-          }).join('') || `<tr><td colspan="9" class="empty">No hajis in this group yet.</td></tr>`}
+          }).join('') || `<tr><td colspan="13" class="empty">No hajis in this group yet.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -972,6 +977,9 @@ async function saveHaji(e, id){
     is_elderly: f.is_elderly.checked,
     needs_wheelchair: f.needs_wheelchair.checked,
     family_code: f.family_code.value,
+    flight_number: f.flight_number.value || null,
+    group_number: f.group_number.value || null,
+    q_number: f.q_number.value || null,
     package_id: f.package_id.value || null,
     notes: f.notes.value
   };
@@ -992,11 +1000,16 @@ const BULK_IMPORT_DEFS = {
   hajis: {
     table: 'hajis',
     title: 'Bulk import hajis',
-    hint: 'One per line: <span class="mono">Full name, Passport no, Phone, Gender, Family code</span>',
-    placeholder: 'Ahmed Ismail, A1234567, 7771234, male, FAM01',
+    hint: 'One per line: <span class="mono">Full name, Passport no, Phone, Gender, Family code, Flight no, Group no, Q no, Room no</span><br/>Room no is matched against rooms already added for this group and auto-assigns the pilgrim — leave blank to skip.',
+    placeholder: 'Ahmed Ismail, A1234567, 7771234, male, FAM01, EK625, G1, Q-00231, 1204',
     parse(line){
-      const [full_name, passport_no, phone, gender, family_code] = line.split(',').map(s=>s?.trim());
-      return full_name ? { group_id: state.activeGroupId, full_name, passport_no, phone, gender: (gender||'').toLowerCase()==='female'?'female':'male', family_code } : null;
+      const [full_name, passport_no, phone, gender, family_code, flight_number, group_number, q_number, room_number] = line.split(',').map(s=>s?.trim());
+      return full_name ? {
+        group_id: state.activeGroupId, full_name, passport_no, phone,
+        gender: (gender||'').toLowerCase()==='female'?'female':'male', family_code,
+        flight_number: flight_number||null, group_number: group_number||null, q_number: q_number||null,
+        _roomNumber: room_number||null
+      } : null;
     }
   },
   rooms: {
@@ -1060,10 +1073,24 @@ async function bulkImportCSV(entity, groupId){
   const text = document.getElementById('csv-text').value.trim();
   if(!text || !def) return;
   const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
-  const rows = lines.map(line=>def.parse(line, groupId)).filter(Boolean);
+  const parsed = lines.map(line=>def.parse(line, groupId)).filter(Boolean);
+  const rows = parsed.map(({_roomNumber, ...rest})=>rest);
   if(rows.length){
-    const { error } = await sb.from(def.table).insert(rows);
-    if(error){ showNotice(error.message, 'error'); return; }
+    if(entity==='hajis'){
+      const { data, error } = await sb.from(def.table).insert(rows).select();
+      if(error){ showNotice(error.message, 'error'); return; }
+      const assignments = [];
+      (data||[]).forEach((haji, i)=>{
+        const roomNumber = parsed[i]?._roomNumber;
+        if(!roomNumber) return;
+        const room = state.rooms.find(r=>r.room_number===roomNumber);
+        if(room) assignments.push({ room_id: room.id, haji_id: haji.id });
+      });
+      if(assignments.length) await sb.from('room_assignments').insert(assignments);
+    } else {
+      const { error } = await sb.from(def.table).insert(rows);
+      if(error){ showNotice(error.message, 'error'); return; }
+    }
   }
   if(entity==='hotels'){
     const { data } = await sb.from('hotels').select('*').order('name');
@@ -1849,6 +1876,11 @@ function renderModal(){
           <select name="package_id"><option value="">—</option>${state.packages.map(p=>`<option value="${p.id}" ${data.package_id===p.id?'selected':''}>${esc(p.name)} (${fmt(p.price)})</option>`).join('')}</select>
         </div>
         <div class="field"><label>Family code (group family members together)</label><input name="family_code" value="${esc(data.family_code||'')}"/></div>
+        <div class="two-col">
+          <div class="field"><label>Flight number</label><input name="flight_number" value="${esc(data.flight_number||'')}" placeholder="e.g. EK625"/></div>
+          <div class="field"><label>Q number</label><input name="q_number" value="${esc(data.q_number||'')}" placeholder="Ministry queue no."/></div>
+        </div>
+        <div class="field"><label>Group number</label><input name="group_number" value="${esc(data.group_number||'')}" placeholder="Sub-group / mushrif no."/></div>
         <div class="two-col">
           <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;"><input type="checkbox" name="is_elderly" style="width:auto;" ${data.is_elderly?'checked':''}/> Elderly</label>
           <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;"><input type="checkbox" name="needs_wheelchair" style="width:auto;" ${data.needs_wheelchair?'checked':''}/> Needs wheelchair</label>
