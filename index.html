@@ -62,6 +62,7 @@
   .pill.ok{background:#e0ecdf;color:var(--ok);}
   .pill.warn{background:#f5e6cf;color:var(--gold);}
   .pill.bad{background:#f3ded9;color:var(--danger);}
+  .offline-banner{background:#f5e6cf;color:#5b4419;font-size:12.5px;font-weight:600;padding:9px 14px;border-radius:8px;margin-bottom:16px;text-align:center;}
   #app{min-height:100vh;display:flex;}
   #sidebar{width:210px;background:var(--teal);color:var(--sand);padding:22px 14px;flex-shrink:0;display:flex;flex-direction:column;position:relative;}
   #sidebar h1{color:var(--sand);font-size:22px;letter-spacing:.02em;}
@@ -292,7 +293,94 @@ let state = {
   paymentTripItems: [],
   tripSummaryReport: null, // {dateFrom, dateTo}
   tripDateReport: null, // {dateFrom, dateTo}
+  offlineMode: false,
+  offlineNoCache: false,
+  offlineCachedAt: null,
 };
+
+// ---------- VIEW-STATE PERSISTENCE (so a refresh doesn't dump you back on Dashboard) ----------
+const VIEW_STATE_KEY = 'rihla_view_state';
+const RESTORABLE_VIEWS = ['dashboard','groups','hajis','rooms','buses','payments','staff','settings'];
+let pendingRestoredView = null;
+try {
+  pendingRestoredView = JSON.parse(localStorage.getItem(VIEW_STATE_KEY)||'null');
+  if(pendingRestoredView?.activeGroupId) state.activeGroupId = pendingRestoredView.activeGroupId;
+} catch(e){ pendingRestoredView = null; }
+
+function persistViewState(){
+  try{
+    const persistedView = ['tripSummary','tripDateReport'].includes(state.view) ? 'tripCollector' : state.view;
+    localStorage.setItem(VIEW_STATE_KEY, JSON.stringify({ view: persistedView, activeGroupId: state.activeGroupId }));
+  }catch(e){}
+}
+
+// ---------- OFFLINE DATA CACHE ----------
+const OFFLINE_CACHE_KEY = 'rihla_data_cache_v1';
+function saveCacheSnapshot(){
+  try{
+    localStorage.setItem(OFFLINE_CACHE_KEY, JSON.stringify({
+      cachedAt: Date.now(),
+      myRole: state.myRole,
+      groups: state.groups,
+      hotels: state.hotels,
+      roleSettings: state.roleSettings,
+      activeGroupId: state.activeGroupId,
+      packages: state.packages,
+      hajis: state.hajis,
+      rooms: state.rooms,
+      roomAssignments: state.roomAssignments,
+      buses: state.buses,
+      busAssignments: state.busAssignments,
+      payments: state.payments,
+      paymentTripItems: state.paymentTripItems,
+      tripTypes: state.tripTypes,
+      staffList: state.staffList,
+    }));
+  }catch(e){}
+}
+function restoreFromCache(){
+  state.offlineMode = true;
+  let snap = null;
+  try{ snap = JSON.parse(localStorage.getItem(OFFLINE_CACHE_KEY)||'null'); }catch(e){}
+  if(!snap){ state.offlineNoCache = true; return; }
+  state.offlineNoCache = false;
+  state.offlineCachedAt = snap.cachedAt;
+  state.myRole = snap.myRole;
+  state.isHaji = false;
+  state.groups = snap.groups||[];
+  state.hotels = snap.hotels||[];
+  state.roleSettings = snap.roleSettings||[];
+  state.activeGroupId = state.activeGroupId || snap.activeGroupId;
+  state.packages = snap.packages||[];
+  state.hajis = snap.hajis||[];
+  state.rooms = snap.rooms||[];
+  state.roomAssignments = snap.roomAssignments||[];
+  state.buses = snap.buses||[];
+  state.busAssignments = snap.busAssignments||[];
+  state.payments = snap.payments||[];
+  state.paymentTripItems = snap.paymentTripItems||[];
+  state.tripTypes = snap.tripTypes||[];
+  state.staffList = snap.staffList||[];
+  applyRestoredView();
+}
+function requireOnline(){
+  if(navigator.onLine) return true;
+  showNotice("You're offline. Connect to the internet to save changes — your view refreshes automatically once you're back online.", 'error');
+  return false;
+}
+window.addEventListener('offline', () => {
+  if(state.session && !state.isHaji){ state.offlineMode = true; render(); }
+});
+window.addEventListener('online', async () => {
+  if(state.session && !state.isHaji){
+    showNotice('Back online — syncing latest data…', 'success');
+    await loadMyRole();
+    await loadAll();
+    state.offlineMode = false;
+    state.offlineNoCache = false;
+    render();
+  }
+});
 
 // ---------- PWA ----------
 if('serviceWorker' in navigator){
@@ -331,13 +419,22 @@ async function initAuth(){
   sb.auth.onAuthStateChange(async (_event, session) => {
     state.session = session;
     if(session) {
-      await loadMyRole();
-      if(state.isHaji) await loadMyHajiData(); else await loadAll();
+      if(navigator.onLine){
+        await loadMyRole();
+        if(state.isHaji) await loadMyHajiData(); else await loadAll();
+      } else {
+        restoreFromCache();
+      }
     } else {
       state.myRole = null; state.isHaji = false; state.myHaji = null;
     }
     render();
   });
+  if(state.session && !navigator.onLine){
+    restoreFromCache();
+    render();
+    return;
+  }
   if(state.session) await loadMyRole();
   render();
   if(state.session){
@@ -492,6 +589,22 @@ async function loadMyHajiData(){
 }
 
 let appliedDefaultView = false;
+function applyRestoredView(){
+  if(appliedDefaultView) return;
+  appliedDefaultView = true;
+  const permitted = permittedNavItems(state.myRole);
+  const restoredView = pendingRestoredView?.view;
+  const isRestorable = restoredView && (RESTORABLE_VIEWS.includes(restoredView) || restoredView==='tripCollector');
+  const isPermitted = isRestorable && permitted.some(d=>d.activeViews.includes(restoredView));
+  if(isPermitted){
+    if(restoredView==='tripCollector') openTripCollector();
+    else state.view = restoredView;
+    return;
+  }
+  const rs = state.roleSettings.find(r=>r.role===state.myRole);
+  const def = rs?.default_view && NAV_ITEM_DEFS.find(d=>d.key===rs.default_view && d.permitted(state.myRole));
+  state.view = def ? def.activeViews[0] : 'dashboard';
+}
 async function loadAll(){
   const { data: groups } = await sb.from('groups').select('*').order('departure_date', {ascending:true});
   state.groups = groups || [];
@@ -500,12 +613,7 @@ async function loadAll(){
   state.hotels = hotels || [];
   const { data: roleSettings } = await sb.from('role_settings').select('*');
   state.roleSettings = roleSettings || [];
-  if(!appliedDefaultView){
-    appliedDefaultView = true;
-    const rs = state.roleSettings.find(r=>r.role===state.myRole);
-    const def = rs?.default_view && NAV_ITEM_DEFS.find(d=>d.key===rs.default_view && d.permitted(state.myRole));
-    if(def) state.view = def.activeViews[0];
-  }
+  applyRestoredView();
   await loadGroupData();
   render();
 }
@@ -549,6 +657,7 @@ async function loadGroupData(){
   } else {
     state.roomAssignments = []; state.busAssignments = []; state.payments = []; state.paymentTripItems = [];
   }
+  saveCacheSnapshot();
 }
 
 async function switchGroup(id){
@@ -850,6 +959,7 @@ function currentPageTitle(){
 }
 function render(){
   if(!state.session){ renderAuth(); return; }
+  if(state.offlineMode && state.offlineNoCache){ renderOfflineNoCacheScreen(); return; }
   if(state.isHaji){ renderHajiDashboard(); return; }
   const navItems = getNavItems();
   root.innerHTML = `
@@ -868,6 +978,7 @@ function render(){
       <div id="main-wrap">
         <div class="mobile-topbar">${esc(currentPageTitle())}</div>
         <div id="main">
+          ${state.offlineMode ? `<div class="offline-banner">⚠ Offline — showing cached data${state.offlineCachedAt?` from ${new Date(state.offlineCachedAt).toLocaleString()}`:''}. Changes are disabled until you're back online.</div>` : ''}
           <div class="topbar">
             <div>
               <label>Active group</label>
@@ -899,8 +1010,9 @@ function render(){
   else if(state.view==='tripCollector') content.innerHTML = renderTripCollector();
   else if(state.view==='tripSummary') content.innerHTML = renderTripSummary();
   else if(state.view==='tripDateReport') content.innerHTML = renderTripDateReport();
-  else if(state.view==='staff') { content.innerHTML = renderStaff(); loadStaffList(); }
+  else if(state.view==='staff') { content.innerHTML = renderStaff(); if(navigator.onLine) loadStaffList(); }
   else if(state.view==='settings') content.innerHTML = renderSettings();
+  persistViewState();
 }
 
 function getNavItems(){
@@ -922,6 +1034,18 @@ function setView(v){ state.view=v; state.mobileNavOpen=false; render(); }
 function toggleNav(){ state.mobileNavOpen = !state.mobileNavOpen; render(); }
 function closeNav(){ state.mobileNavOpen = false; render(); }
 
+function renderOfflineNoCacheScreen(){
+  root.innerHTML = `
+    <div class="auth-wrap">
+      <div class="auth-card" style="text-align:center;">
+        <h1>Rihla</h1>
+        <div class="tagline">Umrah group operations</div>
+        <p style="margin:16px 0;color:#6b6252;">You're offline and no cached data is available on this device yet. Connect to the internet once to load your data — after that it'll stay available offline.</p>
+        <button class="gold" style="width:100%;" onclick="location.reload()">Retry</button>
+      </div>
+    </div>
+  `;
+}
 function renderAuth(){
   root.innerHTML = `
     <div class="auth-wrap">
@@ -1175,6 +1299,7 @@ async function setDefaultHotel(id, leg){
 
 async function saveGroup(e, id){
   e.preventDefault();
+  if(!requireOnline()) return;
   const f = e.target;
   const payload = {
     name: f.name.value, departure_date: f.departure_date.value || null, return_date: f.return_date.value || null,
@@ -1242,6 +1367,7 @@ function renderHajis(){
 
 async function saveHaji(e, id){
   e.preventDefault();
+  if(!requireOnline()) return;
   const f = e.target;
   const payload = {
     group_id: state.activeGroupId,
@@ -1470,6 +1596,7 @@ function renderRooms(){
 
 async function saveRoom(e){
   e.preventDefault();
+  if(!requireOnline()) return;
   const f = e.target;
   await sb.from('rooms').insert({
     group_id: state.activeGroupId, hotel_leg: f.hotel_leg.value, room_number: f.room_number.value,
@@ -1479,6 +1606,7 @@ async function saveRoom(e){
 }
 
 async function toggleRoomAssign(roomId, hajiId, assign){
+  if(!requireOnline()) return;
   if(assign) await sb.from('room_assignments').insert({room_id:roomId, haji_id:hajiId});
   else {
     const rec = state.roomAssignments.find(a=>a.room_id===roomId && a.haji_id===hajiId);
@@ -1545,6 +1673,7 @@ function toggleBusTripField(sel){
 }
 async function saveBus(e, id){
   e.preventDefault();
+  if(!requireOnline()) return;
   const f = e.target;
   const payload = {
     bus_number: f.bus_number.value, leg: f.leg.value,
@@ -1564,6 +1693,7 @@ async function deleteBus(id){
 }
 
 async function toggleBusAssign(busId, hajiId, assign){
+  if(!requireOnline()) return;
   if(assign) await sb.from('bus_assignments').insert({bus_id:busId, haji_id:hajiId});
   else {
     const rec = state.busAssignments.find(a=>a.bus_id===busId && a.haji_id===hajiId);
@@ -1649,6 +1779,7 @@ function printReceipt(paymentId){
 
 async function savePayment(e){
   e.preventDefault();
+  if(!requireOnline()) return;
   const f = e.target;
   await sb.from('payments').insert({
     haji_id: f.haji_id.value, amount: parseFloat(f.amount.value||'0'),
@@ -1848,6 +1979,7 @@ function renderTripCollector(){
   `;
 }
 async function saveTripPayments(){
+  if(!requireOnline()) return;
   const tc = state.tripCollector;
   const eligibleIds = collectorEligibleIds();
   if(!eligibleIds.length){ showNotice('Select at least one trip (or mark FOC) for at least one customer.', 'error'); return; }
