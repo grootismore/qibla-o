@@ -738,59 +738,38 @@ function countByGroup(rows){
   for(const r of (rows||[])) map.set(r.group_id, (map.get(r.group_id)||0)+1);
   return map;
 }
-async function loadAllGroupsSummary(){
-  const [{data:allHajis},{data:allRooms},{data:allBuses}] = await Promise.all([
-    sb.from('hajis').select('id, group_id'),
-    sb.from('rooms').select('id, group_id'),
-    sb.from('buses').select('id, group_id'),
-  ]);
-  state.groupHajiCounts = countByGroup(allHajis);
-  state.groupRoomCounts = countByGroup(allRooms);
-  state.groupBusCounts = countByGroup(allBuses);
-}
+// Loads every group's data at once -- hajis/rooms/buses/payments are never scoped to a single
+// "active" group, so nothing is hidden behind a group picker. Fetched unfiltered (no .in(ids))
+// specifically to avoid huge query strings once there are thousands of records across a season.
 async function loadGroupData(){
-  const gid = state.activeGroupId;
-  await loadAllGroupsSummary();
-  if(!gid){ state.packages=[]; state.hajis=[]; state.rooms=[]; state.roomAssignments=[]; state.buses=[]; state.busAssignments=[]; state.payments=[]; state.tripTypes=[]; return; }
-  const [{data:packages},{data:hajis},{data:rooms},{data:buses},{data:tripTypes}] = await Promise.all([
-    sb.from('packages').select('*').eq('group_id', gid),
-    sb.from('hajis').select('*').eq('group_id', gid).order('full_name'),
-    sb.from('rooms').select('*').eq('group_id', gid).order('room_number'),
-    sb.from('buses').select('*').eq('group_id', gid).order('bus_number'),
-    sb.from('trip_types').select('*').eq('group_id', gid).order('name'),
+  const [{data:packages},{data:hajis},{data:rooms},{data:buses},{data:tripTypes},{data:ra},{data:ba},{data:pay},{data:pti}] = await Promise.all([
+    sb.from('packages').select('*'),
+    sb.from('hajis').select('*').order('full_name'),
+    sb.from('rooms').select('*').order('room_number'),
+    sb.from('buses').select('*').order('bus_number'),
+    sb.from('trip_types').select('*').order('name'),
+    sb.from('room_assignments').select('*'),
+    sb.from('bus_assignments').select('*'),
+    sb.from('payments').select('*').order('paid_on', {ascending:false}),
+    sb.from('payment_trip_items').select('*'),
   ]);
   state.packages = packages || [];
   state.hajis = hajis || [];
   state.rooms = rooms || [];
   state.buses = buses || [];
   state.tripTypes = tripTypes || [];
-
-  const hajiIds = state.hajis.map(h=>h.id);
-  if(hajiIds.length){
-    const [{data:ra},{data:ba},{data:pay}] = await Promise.all([
-      sb.from('room_assignments').select('*').in('haji_id', hajiIds),
-      sb.from('bus_assignments').select('*').in('haji_id', hajiIds),
-      sb.from('payments').select('*').in('haji_id', hajiIds).order('paid_on',{ascending:false}),
-    ]);
-    state.roomAssignments = ra || [];
-    state.busAssignments = ba || [];
-    state.payments = pay || [];
-    const paymentIds = state.payments.map(p=>p.id);
-    if(paymentIds.length){
-      const { data: pti } = await sb.from('payment_trip_items').select('*').in('payment_id', paymentIds);
-      state.paymentTripItems = pti || [];
-    } else {
-      state.paymentTripItems = [];
-    }
-  } else {
-    state.roomAssignments = []; state.busAssignments = []; state.payments = []; state.paymentTripItems = [];
-  }
+  state.roomAssignments = ra || [];
+  state.busAssignments = ba || [];
+  state.payments = pay || [];
+  state.paymentTripItems = pti || [];
+  state.groupHajiCounts = countByGroup(state.hajis);
+  state.groupRoomCounts = countByGroup(state.rooms);
+  state.groupBusCounts = countByGroup(state.buses);
   saveCacheSnapshot();
 }
 
 async function switchGroup(id){
   state.activeGroupId = id;
-  await loadGroupData();
   render();
 }
 
@@ -878,10 +857,13 @@ async function assignFamilyToBus(busId, familyCode){
   openModal('assignBus', {busId});
   showNotice(`Assigned all ${toAssign.length} family member${toAssign.length===1?'':'s'} to Bus ${bus.bus_number}.`, 'success');
 }
+function groupById(id){ return state.groups.find(g=>g.id===id); }
 function hajiSummaryLine(h, maps){
   const room = maps ? (maps.rooms.get(`${h.id}|mecca`) || maps.rooms.get(`${h.id}|madinah`)) : (hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah'));
   const bus = maps ? maps.buses.get(h.id) : hajiBus(h.id);
   const parts = [];
+  const grp = groupById(h.group_id);
+  if(grp) parts.push(esc(grp.name));
   if(h.group_number) parts.push(esc(h.group_number));
   if(room) parts.push(`Room ${esc(room.room_number)}`);
   if(bus){
@@ -1183,17 +1165,6 @@ function render(){
         <div class="mobile-topbar">${esc(currentPageTitle())}</div>
         <div id="main">
           ${state.offlineMode ? `<div class="offline-banner">⚠ Offline — showing cached data${state.offlineCachedAt?` from ${new Date(state.offlineCachedAt).toLocaleString()}`:''}. Changes are disabled until you're back online.</div>` : ''}
-          <div class="topbar">
-            <div>
-              <label>Now viewing (all groups stay live — see Groups for totals)</label>
-              ${customSelectHtml({
-                options: state.groups.map(g=>({value:g.id, label:`${g.name} — ${g.departure_date||'no date'}`})),
-                value: state.activeGroupId,
-                placeholder: 'No groups yet',
-                onChange: 'switchGroup(this.value)'
-              })}
-            </div>
-          </div>
           <div id="content"></div>
         </div>
       </div>
@@ -1399,8 +1370,7 @@ function renderDashboard(){
       </div>
     </div>
   `;
-  const g = state.groups.find(x=>x.id===state.activeGroupId);
-  if(!g) return overviewHtml + `<div class="empty"><h3>No group selected</h3><p>Create a group to get started.</p></div>`;
+  if(!state.groups.length) return overviewHtml + `<div class="empty"><h3>No groups yet</h3><p>Create a group to get started.</p></div>`;
   const total = state.hajis.length;
   const totalDue = state.hajis.reduce((s,h)=>{ const pkg=packageById(h.package_id); return s+(pkg?Number(pkg.price):0); },0);
   const totalCollected = state.payments.reduce((s,p)=>s+Number(p.amount),0);
@@ -1411,8 +1381,8 @@ function renderDashboard(){
   const unpaidCount = state.hajis.filter(h=>{ const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; return (paidMap.get(h.id)||0) < due; }).length;
 
   return overviewHtml + `
-    <h2 style="margin-bottom:4px;">${esc(g.name)}</h2>
-    <p style="color:#6b6252;margin-bottom:20px;">${g.departure_date||'—'} to ${g.return_date||'—'} · Mecca: ${esc(g.mecca_hotel||'—')} · Madinah: ${esc(g.madinah_hotel||'—')}</p>
+    <h2 style="margin-bottom:4px;">All hajjis, every group</h2>
+    <p style="color:#6b6252;margin-bottom:20px;">Combined totals across all ${state.groups.length} group${state.groups.length===1?'':'s'} · see Groups for the per-group breakdown.</p>
     <div class="grid grid-4">
       <div class="card"><div class="stat-label">Total hajis</div><div class="stat-value">${total}</div></div>
       <div class="card"><div class="stat-label">Rooms assigned</div><div class="stat-value">${roomsAssigned}/${total}</div></div>
@@ -1454,7 +1424,7 @@ function renderGroups(){
       ${sortedGroups.map(g=>`
         <div class="summary-row" onclick="openModal('groupDetail', state.groups.find(x=>x.id==='${g.id}'))">
           <div>
-            <div class="summary-name">${esc(g.name)} ${g.id===state.activeGroupId?'<span class="pill ok">Viewing</span>':''}</div>
+            <div class="summary-name">${esc(g.name)}</div>
             <div class="summary-sub">${groupSummaryLine(g)}</div>
           </div>
           <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
@@ -1549,48 +1519,47 @@ async function addPackage(groupId){
   if(!name) return;
   await sb.from('packages').insert({ group_id: groupId, name, price });
   const {data} = await sb.from('packages').select('*').eq('group_id', groupId);
-  state.packages = state.activeGroupId===groupId ? data : state.packages;
+  state.packages = [...state.packages.filter(p=>p.group_id!==groupId), ...(data||[])];
   openModal('packages', {groupId});
-  if(state.activeGroupId===groupId) render();
 }
 async function deletePackage(id, groupId){
   await sb.from('packages').delete().eq('id', id);
+  state.packages = state.packages.filter(p=>p.id!==id);
   openModal('packages', {groupId});
 }
 
 // ---------- TRIP TYPES (ziyarat) ----------
-async function addTripType(){
+async function addTripType(groupId){
   const name = document.getElementById('trip-type-name').value.trim();
   const price_adult = parseFloat(document.getElementById('trip-type-price-adult').value || '0');
   const price_child = parseFloat(document.getElementById('trip-type-price-child').value || '0');
-  if(!name || !state.activeGroupId) return;
-  await sb.from('trip_types').insert({ group_id: state.activeGroupId, name, price_adult, price_child });
-  const { data } = await sb.from('trip_types').select('*').eq('group_id', state.activeGroupId).order('name');
-  state.tripTypes = data || [];
-  openModal('tripTypes');
+  if(!name || !groupId) return;
+  await sb.from('trip_types').insert({ group_id: groupId, name, price_adult, price_child });
+  const { data } = await sb.from('trip_types').select('*').eq('group_id', groupId).order('name');
+  state.tripTypes = [...state.tripTypes.filter(t=>t.group_id!==groupId), ...(data||[])];
+  openModal('tripTypes', {groupId});
 }
-async function deleteTripType(id){
+async function deleteTripType(id, groupId){
   await sb.from('trip_types').delete().eq('id', id);
-  const { data } = await sb.from('trip_types').select('*').eq('group_id', state.activeGroupId).order('name');
-  state.tripTypes = data || [];
-  openModal('tripTypes');
+  state.tripTypes = state.tripTypes.filter(t=>t.id!==id);
+  openModal('tripTypes', {groupId});
 }
 
 // ---------- HAJIS ----------
 function renderHajis(){
-  if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
   const maps = { rooms: hajiRoomMap(), buses: hajiBusMap() };
   return `
     <div class="toolbar">
       ${can('manageHajis') ? `<button class="primary" onclick="openModal('haji')">+ Add haji</button>` : ''}
     </div>
     <div class="field" style="margin-bottom:12px;">
-      <input id="hajis-search" placeholder="Search by name, room, or Q number…" value="${esc(state.hajisSearchQuery||'')}" oninput="filterHajisList(this.value)"/>
+      <input id="hajis-search" placeholder="Search by name, group, room, or Q number…" value="${esc(state.hajisSearchQuery||'')}" oninput="filterHajisList(this.value)"/>
     </div>
     <div class="summary-list" id="hajis-list">
       ${state.hajis.map(h=>{
         const room = maps.rooms.get(`${h.id}|mecca`) || maps.rooms.get(`${h.id}|madinah`);
-        const searchText = [h.full_name, room?.room_number, h.q_number].filter(Boolean).join(' ').toLowerCase();
+        const grp = groupById(h.group_id);
+        const searchText = [h.full_name, grp?.name, room?.room_number, h.q_number].filter(Boolean).join(' ').toLowerCase();
         return `
         <div class="summary-row" data-search="${esc(searchText)}" onclick="openModal('hajiDetail', hajiById('${h.id}'))">
           <div>
@@ -1599,7 +1568,7 @@ function renderHajis(){
           </div>
           <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
         </div>
-      `;}).join('') || `<div class="empty">No hajis in this group yet.</div>`}
+      `;}).join('') || `<div class="empty">No hajis yet — add one, or import a CSV in Settings.</div>`}
     </div>
     <div id="hajis-no-results" class="empty" style="display:none;">No matches found.</div>
   `;
@@ -1622,7 +1591,7 @@ async function saveHaji(e, id){
   if(!requireOnline()) return;
   const f = e.target;
   const payload = {
-    group_id: state.activeGroupId,
+    group_id: f.group_id.value,
     full_name: f.full_name.value,
     passport_no: f.passport_no.value,
     phone: f.phone.value,
@@ -1698,10 +1667,10 @@ const BULK_IMPORT_DEFS = {
     title: 'Bulk import rooms',
     hint: 'One per line: <span class="mono">Leg (mecca/madinah), Room number, Capacity, Type (family/male/female)</span>',
     placeholder: 'mecca, 1204, 4, family',
-    parse(line){
+    parse(line, groupId){
       const [leg, room_number, capacity, gender] = parseCsvLine(line);
       if(!room_number) return null;
-      return { group_id: state.activeGroupId, hotel_leg: (leg||'').toLowerCase()==='madinah'?'madinah':'mecca', room_number, capacity: parseInt(capacity||'4'), gender: ['male','female'].includes((gender||'').toLowerCase())?gender.toLowerCase():'family' };
+      return { group_id: groupId, hotel_leg: (leg||'').toLowerCase()==='madinah'?'madinah':'mecca', room_number, capacity: parseInt(capacity||'4'), gender: ['male','female'].includes((gender||'').toLowerCase())?gender.toLowerCase():'family' };
     }
   },
   buses: {
@@ -1709,13 +1678,13 @@ const BULK_IMPORT_DEFS = {
     title: 'Bulk import buses',
     hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Helper name, Capacity, Trip name (ziyarat only)</span><br/>Helper is matched against staff already added (unmatched names are left blank). A trip name that doesn\'t exist yet is created automatically — the helper counts toward capacity.',
     placeholder: 'ziyarat, B-12, Ali Hassan, 45, Hira',
-    parse(line){
+    parse(line, groupId){
       const [leg, bus_number, helperName, capacity, tripName] = parseCsvLine(line);
       if(!bus_number) return null;
       const legs = ['airport_transfer','mecca_madinah','ziyarat'];
       const normalizedLeg = legs.includes((leg||'').toLowerCase())?leg.toLowerCase():'airport_transfer';
       const helper = helperName ? state.staffList.find(s=>s.full_name.toLowerCase()===helperName.toLowerCase()) : null;
-      return { group_id: state.activeGroupId, leg: normalizedLeg, bus_number, helper_staff_id: helper?helper.id:null, capacity: parseInt(capacity||'45'), _tripName: normalizedLeg==='ziyarat' ? (tripName||null) : null };
+      return { group_id: groupId, leg: normalizedLeg, bus_number, helper_staff_id: helper?helper.id:null, capacity: parseInt(capacity||'45'), _tripName: normalizedLeg==='ziyarat' ? (tripName||null) : null };
     }
   },
   hotels: {
@@ -1733,9 +1702,9 @@ const BULK_IMPORT_DEFS = {
     title: 'Bulk import trip types',
     hint: 'One per line: <span class="mono">Trip name, Adult price, Child (5-9) price</span>',
     placeholder: 'Hira, 150, 75',
-    parse(line){
+    parse(line, groupId){
       const [name, price_adult, price_child] = parseCsvLine(line);
-      return name ? { group_id: state.activeGroupId, name, price_adult: parseFloat(price_adult||'0'), price_child: parseFloat(price_child||'0') } : null;
+      return name ? { group_id: groupId, name, price_adult: parseFloat(price_adult||'0'), price_child: parseFloat(price_child||'0') } : null;
     }
   },
   packages: {
@@ -1861,7 +1830,7 @@ async function bulkImportCSV(entity, groupId){
       if(missingRooms.size){
         const { data: newRooms, error: roomErr } = await sb.from('rooms').insert([...missingRooms.values()]).select();
         if(roomErr){ resetImportProgress(); showNotice(roomErr.message, 'error'); return; }
-        for(const r of (newRooms||[])){ roomCache.set(`${r.group_id}|${r.room_number.toLowerCase()}`, r); if(r.group_id===state.activeGroupId) state.rooms.push(r); }
+        for(const r of (newRooms||[])){ roomCache.set(`${r.group_id}|${r.room_number.toLowerCase()}`, r); state.rooms.push(r); }
       }
 
       updateImportProgress(2, totalSteps, 'Resolving packages…');
@@ -1883,7 +1852,7 @@ async function bulkImportCSV(entity, groupId){
       if(missingPackages.size){
         const { data: newPackages, error: pkgErr } = await sb.from('packages').insert([...missingPackages.values()]).select();
         if(pkgErr){ resetImportProgress(); showNotice(pkgErr.message, 'error'); return; }
-        for(const x of (newPackages||[])){ packageCache.set(`${x.group_id}|${x.name.toLowerCase()}`, x); if(x.group_id===state.activeGroupId) state.packages.push(x); }
+        for(const x of (newPackages||[])){ packageCache.set(`${x.group_id}|${x.name.toLowerCase()}`, x); state.packages.push(x); }
       }
 
       updateImportProgress(3, totalSteps, 'Saving pilgrims…');
@@ -1930,7 +1899,7 @@ async function bulkImportCSV(entity, groupId){
   if(entity==='hotels'){
     const { data } = await sb.from('hotels').select('*').order('name');
     state.hotels = data || [];
-  } else if(state.activeGroupId){
+  } else {
     await loadGroupData();
   }
   closeModal();
@@ -1940,7 +1909,6 @@ async function bulkImportCSV(entity, groupId){
 
 // ---------- ROOMS ----------
 function renderRooms(){
-  if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
   const legs = ['mecca','madinah'];
   return `
     <div class="toolbar">
@@ -1954,11 +1922,13 @@ function renderRooms(){
         ${rooms.map(r=>{
           const occ = roomOccupants(r.id);
           const over = occ.length > r.capacity;
+          const grp = groupById(r.group_id);
           return `<div class="card">
             <div style="display:flex;justify-content:space-between;">
               <strong>Room ${esc(r.room_number)}</strong>
               <span class="pill ${over?'bad':'ok'}">${occ.length}/${r.capacity}</span>
             </div>
+            ${grp ? `<div style="font-size:11px;color:#8a8168;margin-top:2px;">${esc(grp.name)}</div>` : ''}
             <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;text-transform:capitalize;">${r.gender}</div>
             <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,occ.length/r.capacity*100)}%"></div></div>
             <div style="margin-top:10px;font-size:12px;">
@@ -1978,7 +1948,7 @@ async function saveRoom(e){
   if(!requireOnline()) return;
   const f = e.target;
   await sb.from('rooms').insert({
-    group_id: state.activeGroupId, hotel_leg: f.hotel_leg.value, room_number: f.room_number.value,
+    group_id: f.group_id.value, hotel_leg: f.hotel_leg.value, room_number: f.room_number.value,
     capacity: parseInt(f.capacity.value||'4'), gender: f.gender.value
   });
   closeModal(); await loadGroupData(); render();
@@ -2003,11 +1973,13 @@ function busCardsHtml(buses, leg){
     const total = occ.length + (helper?1:0);
     const over = total > b.capacity;
     const trip = leg==='ziyarat' ? state.tripTypes.find(t=>t.id===b.trip_type_id) : null;
+    const grp = groupById(b.group_id);
     return `<div class="card">
       <div style="display:flex;justify-content:space-between;">
         <strong>Bus ${esc(b.bus_number)}</strong>
         <span class="pill ${over?'bad':'ok'}">${total}/${b.capacity}</span>
       </div>
+      ${grp ? `<div style="font-size:11px;color:#8a8168;margin-top:2px;">${esc(grp.name)}</div>` : ''}
       ${trip ? `<div style="margin:4px 0;"><span class="pill warn">${esc(trip.name)}</span></div>` : ''}
       <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Helper: ${helper?`${esc(helper.full_name)} (${esc(roleLabel(helper.role))})`:'—'}</div>
       <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,total/b.capacity*100)}%"></div></div>
@@ -2022,7 +1994,6 @@ function busCardsHtml(buses, leg){
   }).join('') || `<div class="empty" style="grid-column:1/-1;">No buses added for this leg yet.</div>`;
 }
 function renderBuses(){
-  if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
   const nonZiyaratLegs = [['airport_transfer','Airport transfer'],['mecca_madinah','Mecca ↔ Madinah']];
   const ziyaratBuses = state.buses.filter(b=>b.leg==='ziyarat');
   const ziyaratGroups = state.tripTypes
@@ -2063,7 +2034,7 @@ async function saveBus(e, id){
   };
   let error;
   if(id) ({ error } = await sb.from('buses').update(payload).eq('id', id));
-  else ({ error } = await sb.from('buses').insert({ group_id: state.activeGroupId, ...payload }));
+  else ({ error } = await sb.from('buses').insert({ group_id: f.group_id.value, ...payload }));
   if(error){ showNotice(error.message, 'error'); return; }
   closeModal(); await loadGroupData(); render();
 }
@@ -2086,27 +2057,28 @@ async function toggleBusAssign(busId, hajiId, assign){
 
 // ---------- PAYMENTS ----------
 function renderPayments(){
-  if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
   return `
     <div class="toolbar">
       ${can('managePayments') ? `<button class="primary" onclick="openModal('payment')">+ Record payment</button>` : ''}
     </div>
     <div class="card table-wrap">
       <table>
-        <thead><tr><th>Haji</th><th>Amount</th><th>Method</th><th>Date</th><th>Reference</th><th></th></tr></thead>
+        <thead><tr><th>Haji</th><th>Group</th><th>Amount</th><th>Method</th><th>Date</th><th>Reference</th><th></th></tr></thead>
         <tbody>
           ${state.payments.map(p=>{
             const h = hajiById(p.haji_id);
+            const grp = h ? groupById(h.group_id) : null;
             const trips = tripsForPayment(p.id);
             return `<tr>
               <td>${esc(h?.full_name||'Unknown')}${trips.length?`<div style="font-size:11px;color:#8a8168;">${trips.map(t=>esc(t.trip_name)).join(', ')}</div>`:''}</td>
+              <td data-label="Group">${esc(grp?.name||'—')}</td>
               <td data-label="Amount">${fmt(p.amount)}</td>
               <td data-label="Method" style="text-transform:capitalize;">${p.method.replace('_',' ')}</td>
               <td data-label="Date">${p.paid_on}</td>
               <td data-label="Reference">${esc(p.reference||'—')}</td>
               <td class="row-actions"><button class="ghost" onclick="printReceipt('${p.id}')">Print receipt</button></td>
             </tr>`;
-          }).join('') || `<tr><td colspan="6" class="empty">No payments recorded yet.</td></tr>`}
+          }).join('') || `<tr><td colspan="7" class="empty">No payments recorded yet.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -2117,7 +2089,7 @@ function printReceipt(paymentId){
   const p = state.payments.find(x=>x.id===paymentId);
   if(!p) return;
   const h = hajiById(p.haji_id);
-  const g = state.groups.find(x=>x.id===state.activeGroupId);
+  const g = h ? groupById(h.group_id) : null;
   const pkg = packageById(h?.package_id);
   const due = pkg?Number(pkg.price):0;
   const paid = hajiPaid(h?.id);
@@ -2173,6 +2145,7 @@ async function savePayment(e){
 // ---------- TRIP PAYMENT COLLECTOR ----------
 function openTripCollector(){
   state.tripCollector = {
+    groupId: state.activeGroupId || state.groups[0]?.id || null,
     selectedIds: [],
     perHaji: {},
     template: {},
@@ -2182,6 +2155,22 @@ function openTripCollector(){
   };
   state.view = 'tripCollector';
   state.mobileNavOpen = false;
+  render();
+}
+function collectorTripTypes(){
+  const gid = state.tripCollector?.groupId;
+  return state.tripTypes.filter(t=>t.group_id===gid);
+}
+function setCollectorGroup(groupId){
+  state.tripCollector = {
+    groupId,
+    selectedIds: [],
+    perHaji: {},
+    template: {},
+    method: state.tripCollector.method,
+    paidOn: state.tripCollector.paidOn,
+    reference: '',
+  };
   render();
 }
 function addHajiToCollector(hajiId){
@@ -2201,9 +2190,11 @@ function searchIndividualForCollector(){
   const q = (document.getElementById('collector-search').value||'').trim().toLowerCase();
   if(!q) return;
   const matches = state.hajis.filter(h=>
-    (h.full_name||'').toLowerCase().includes(q) ||
-    (h.passport_no||'').toLowerCase().includes(q) ||
-    (h.family_code||'').toLowerCase().includes(q)
+    h.group_id===state.tripCollector.groupId && (
+      (h.full_name||'').toLowerCase().includes(q) ||
+      (h.passport_no||'').toLowerCase().includes(q) ||
+      (h.family_code||'').toLowerCase().includes(q)
+    )
   );
   if(!matches.length){ showNotice('No matching customer found.', 'error'); return; }
   matches.forEach(h=>addHajiToCollector(h.id));
@@ -2266,22 +2257,37 @@ function tripCheckboxHtml(tripType, checked, onchangeExpr, category){
 function renderTripCollector(){
   const tc = state.tripCollector;
   if(!tc) return '';
-  if(!state.tripTypes.length){
-    return `
+  const groupPickerHtml = `
+    <div class="field" style="margin-bottom:16px;max-width:340px;">
+      <label>Group</label>
+      ${customSelectHtml({
+        options: state.groups.map(g=>({value:g.id, label:g.name})),
+        value: tc.groupId,
+        placeholder: 'Select a group',
+        onChange: 'setCollectorGroup(this.value)'
+      })}
+    </div>
+  `;
+  if(!tc.groupId){
+    return groupPickerHtml + `<div class="empty"><h3>Select a group to begin</h3></div>`;
+  }
+  const groupTripTypes = collectorTripTypes();
+  if(!groupTripTypes.length){
+    return groupPickerHtml + `
       <div class="toolbar">
-        <button class="ghost" onclick="openModal('tripTypes')">Manage trip types</button>
+        <button class="ghost" onclick="openModal('tripTypes',{groupId:tc.groupId})">Manage trip types</button>
       </div>
       <div class="empty">
-        <h3>No trip types yet</h3>
+        <h3>No trip types yet for this group</h3>
         <p>Add ziyarat trips (e.g. Hira, Taif, Jeddah, Meeqat) with prices first.</p>
-        <button class="gold" style="margin-top:10px;" onclick="openModal('tripTypes')">Manage trip types</button>
+        <button class="gold" style="margin-top:10px;" onclick="openModal('tripTypes',{groupId:tc.groupId})">Manage trip types</button>
       </div>
     `;
   }
   const eligibleIds = collectorEligibleIds();
-  return `
+  return groupPickerHtml + `
     <div class="toolbar">
-      <button class="ghost" onclick="openModal('tripTypes')">Manage trip types</button>
+      <button class="ghost" onclick="openModal('tripTypes',{groupId:tc.groupId})">Manage trip types</button>
       <button class="ghost" onclick="openTripSummary()">Trip payment summary</button>
       <button class="ghost" onclick="openTripDateReport()">Date-wise collection</button>
     </div>
@@ -2293,7 +2299,7 @@ function renderTripCollector(){
           <label>Room</label>
           ${customSelectHtml({
             id: 'collector-room',
-            options: state.rooms.map(r=>({value:r.id, label:`${r.room_number} (${titleCase(r.hotel_leg)})`})),
+            options: state.rooms.filter(r=>r.group_id===tc.groupId).map(r=>({value:r.id, label:`${r.room_number} (${titleCase(r.hotel_leg)})`})),
             value: '', placeholder: 'Select room'
           })}
           <button class="ghost" style="width:100%;margin-top:8px;" onclick="addRoomToCollector()">Add Room</button>
@@ -2310,7 +2316,7 @@ function renderTripCollector(){
       <h3 style="margin-bottom:14px;">Selected customers</h3>
       <div class="collector-template">
         <strong style="font-size:11px;color:#6b6252;text-transform:uppercase;letter-spacing:.05em;">Trip template</strong>
-        ${state.tripTypes.map(t=>tripCheckboxHtml(t, !!tc.template[t.id], `toggleTemplateTrip('${t.id}',this.checked)`)).join('')}
+        ${groupTripTypes.map(t=>tripCheckboxHtml(t, !!tc.template[t.id], `toggleTemplateTrip('${t.id}',this.checked)`)).join('')}
       </div>
       <div class="toolbar">
         <button class="ghost" onclick="applyTripsToAll()">Apply trips to all</button>
@@ -2330,7 +2336,7 @@ function renderTripCollector(){
               <div style="font-size:11px;color:#8a8168;">${esc(h.passport_no||'—')}${room?` · Room ${esc(room.room_number)}`:''} · ${category}</div>
             </div>
             <label class="trip-check"><input type="checkbox" ${ph.foc?'checked':''} onchange="toggleCollectorFOC('${id}',this.checked)"/> FOC</label>
-            ${state.tripTypes.map(t=>tripCheckboxHtml(t, !!ph.trips[t.id], `toggleCollectorTrip('${id}','${t.id}',this.checked)`, category)).join('')}
+            ${groupTripTypes.map(t=>tripCheckboxHtml(t, !!ph.trips[t.id], `toggleCollectorTrip('${id}','${t.id}',this.checked)`, category)).join('')}
             <span class="trip-total">${fmt(collectorLineTotal(id))}</span>
             <button class="danger" onclick="removeFromCollector('${id}')">Remove</button>
           </div>
@@ -2364,9 +2370,10 @@ async function saveTripPayments(){
   const tc = state.tripCollector;
   const eligibleIds = collectorEligibleIds();
   if(!eligibleIds.length){ showNotice('Select at least one trip (or mark FOC) for at least one customer.', 'error'); return; }
+  const groupTripTypes = collectorTripTypes();
   for(const hajiId of eligibleIds){
     const ph = tc.perHaji[hajiId];
-    const checkedTrips = state.tripTypes.filter(t=>ph.trips[t.id]);
+    const checkedTrips = groupTripTypes.filter(t=>ph.trips[t.id]);
     const amount = ph.foc ? 0 : checkedTrips.reduce((s,t)=>s+priceForHaji(t, hajiId),0);
     const { data: paymentRow, error } = await sb.from('payments').insert({
       haji_id: hajiId, amount,
@@ -2734,14 +2741,15 @@ function renderModal(){
     const detailRow = (label, value) => `<div class="detail-row"><span class="detail-label">${label}</span><span class="detail-value">${value}</span></div>`;
     body = `
       <h3>${esc(g.name)}</h3>
-      ${g.id===state.activeGroupId ? `<div style="margin-bottom:12px;"><span class="pill ok">Currently viewing</span></div>` : ''}
+      ${g.id===state.activeGroupId ? `<div style="margin-bottom:12px;"><span class="pill ok">Default group for new records</span></div>` : ''}
       <div class="detail-list" style="margin-bottom:16px;">
         ${detailRow('Departure', esc(g.departure_date||'—'))}
         ${detailRow('Return', esc(g.return_date||'—'))}
         ${detailRow('Mecca hotel', esc(g.mecca_hotel||'—'))}
         ${detailRow('Madinah hotel', esc(g.madinah_hotel||'—'))}
       </div>
-      <button class="ghost" style="width:100%;margin-bottom:8px;" onclick="openModal('packages',{groupId:'${g.id}'})" ${can('managePackages')?'':'disabled'}>Manage packages${g.id===state.activeGroupId?` <span class="badge-count">${state.packages.length}</span>`:''}</button>
+      <button class="ghost" style="width:100%;margin-bottom:8px;" onclick="openModal('packages',{groupId:'${g.id}'})" ${can('managePackages')?'':'disabled'}>Manage packages <span class="badge-count">${state.packages.filter(p=>p.group_id===g.id).length}</span></button>
+      ${g.id!==state.activeGroupId ? `<button class="ghost" style="width:100%;margin-bottom:8px;" onclick="switchGroup('${g.id}');openModal('groupDetail', state.groups.find(x=>x.id==='${g.id}'))">Set as default for new records</button>` : ''}
       <div style="display:flex;gap:8px;">
         ${can('manageGroups') ? `<button class="primary" style="flex:1" onclick="openModal('group', state.groups.find(x=>x.id==='${g.id}'))">Edit</button>` : ''}
         <button class="ghost" style="flex:1" onclick="closeModal()">Close</button>
@@ -2791,7 +2799,7 @@ function renderModal(){
     `;
   } else if(type==='packages'){
     const gid = data.groupId;
-    const pkgs = state.activeGroupId===gid ? state.packages : [];
+    const pkgs = state.packages.filter(p=>p.group_id===gid);
     body = `
       <h3>Packages</h3>
       <div class="assign-list" style="margin-bottom:14px;">
@@ -2807,19 +2815,30 @@ function renderModal(){
       </div>
     `;
   } else if(type==='tripTypes'){
+    const gid = data?.groupId || state.activeGroupId || state.groups[0]?.id || '';
+    const groupTypes = state.tripTypes.filter(t=>t.group_id===gid);
     body = `
       <h3>Ziyarat trip types</h3>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Group</label>
+        ${customSelectHtml({
+          options: state.groups.map(g=>({value:g.id, label:g.name})),
+          value: gid,
+          placeholder: 'Select a group',
+          onChange: "openModal('tripTypes',{groupId:this.value})"
+        })}
+      </div>
       <p style="font-size:12px;color:#6b6252;">Priced trips for this group (e.g. Hira, Taif, Jeddah, Meeqat) used by the trip payment collector. Under 5s always ride free.</p>
       <div class="assign-list" style="margin:10px 0 14px;">
-        ${state.tripTypes.map(t=>`<div class="assign-row"><span>${esc(t.name)} — Adult ${fmt(t.price_adult)} · Child (5-9) ${fmt(t.price_child)} · Under 5 free</span><button id="del-trip-type-${t.id}" class="danger" onclick="withBusyButton('del-trip-type-${t.id}','Removing…',()=>deleteTripType('${t.id}'))">Remove</button></div>`).join('') || '<div class="empty">No trip types yet</div>'}
+        ${groupTypes.map(t=>`<div class="assign-row"><span>${esc(t.name)} — Adult ${fmt(t.price_adult)} · Child (5-9) ${fmt(t.price_child)} · Under 5 free</span><button id="del-trip-type-${t.id}" class="danger" onclick="withBusyButton('del-trip-type-${t.id}','Removing…',()=>deleteTripType('${t.id}','${gid}'))">Remove</button></div>`).join('') || '<div class="empty">No trip types yet</div>'}
       </div>
-      <div class="field"><input id="trip-type-name" placeholder="e.g. Hira"/></div>
+      <div class="field"><input id="trip-type-name" placeholder="e.g. Hira" ${gid?'':'disabled'}/></div>
       <div class="two-col">
-        <input id="trip-type-price-adult" type="number" step="0.01" placeholder="Adult price (MVR)"/>
-        <input id="trip-type-price-child" type="number" step="0.01" placeholder="Child 5-9 price (MVR)"/>
+        <input id="trip-type-price-adult" type="number" step="0.01" placeholder="Adult price (MVR)" ${gid?'':'disabled'}/>
+        <input id="trip-type-price-child" type="number" step="0.01" placeholder="Child 5-9 price (MVR)" ${gid?'':'disabled'}/>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
-        <button id="add-trip-type-btn" class="gold" style="flex:1" onclick="withBusyButton('add-trip-type-btn','Adding…',()=>addTripType())">Add trip type</button>
+        <button id="add-trip-type-btn" class="gold" style="flex:1" onclick="withBusyButton('add-trip-type-btn','Adding…',()=>addTripType('${gid}'))" ${gid?'':'disabled'}>Add trip type</button>
         <button class="ghost" onclick="closeModal()">Close</button>
       </div>
     `;
@@ -2861,6 +2880,14 @@ function renderModal(){
     body = `
       <h3>${data.id?'Edit haji':'Add haji'}</h3>
       <form onsubmit="saveHaji(event, ${data.id?`'${data.id}'`:'null'})">
+        <div class="field"><label>Group</label>
+          ${customSelectHtml({
+            name: 'group_id', required: true,
+            options: state.groups.map(g=>({value:g.id, label:g.name})),
+            value: data.group_id || state.activeGroupId || state.groups[0]?.id || '',
+            placeholder: 'Select a group'
+          })}
+        </div>
         <div class="field"><label>Full name</label><input name="full_name" value="${esc(data.full_name||'')}" required/></div>
         <div class="two-col">
           <div class="field"><label>Passport no.</label><input name="passport_no" value="${esc(data.passport_no||'')}"/></div>
@@ -2981,6 +3008,14 @@ function renderModal(){
     body = `
       <h3>Add room</h3>
       <form onsubmit="saveRoom(event)">
+        <div class="field"><label>Group</label>
+          ${customSelectHtml({
+            name: 'group_id', required: true,
+            options: state.groups.map(g=>({value:g.id, label:g.name})),
+            value: data.group_id || state.activeGroupId || state.groups[0]?.id || '',
+            placeholder: 'Select a group'
+          })}
+        </div>
         <div class="two-col">
           <div class="field"><label>Leg</label>${customSelectHtml({ name:'hotel_leg', options:[{value:'mecca',label:'Mecca'},{value:'madinah',label:'Madinah'}], searchable:false })}</div>
           <div class="field"><label>Room number</label><input name="room_number" required/></div>
@@ -3001,7 +3036,7 @@ function renderModal(){
     body = `
       <h3>Assign to Room ${esc(room.room_number)}</h3>
       <div class="assign-list">
-        ${state.hajis.map(h=>`
+        ${state.hajis.filter(h=>h.group_id===room.group_id).map(h=>`
           <div class="assign-row">
             <span>${esc(h.full_name)} ${h.family_code?`<span style="color:#8a8168;">(${esc(h.family_code)})</span>`:''}</span>
             <input type="checkbox" style="width:auto;" ${occIds.has(h.id)?'checked':''} onchange="toggleRoomAssign('${room.id}','${h.id}',this.checked)"/>
@@ -3011,9 +3046,20 @@ function renderModal(){
       <button class="ghost" style="width:100%;margin-top:12px;" onclick="closeModal()">Done</button>
     `;
   } else if(type==='bus'){
+    const busGroupId = data.group_id || state.activeGroupId || state.groups[0]?.id || '';
+    const busGroupTripTypes = state.tripTypes.filter(t=>t.group_id===busGroupId);
     body = `
       <h3>${data.id?'Edit bus':'Add bus'}</h3>
       <form onsubmit="saveBus(event, ${data.id?`'${data.id}'`:'null'})">
+        <div class="field"><label>Group</label>
+          ${customSelectHtml({
+            name: 'group_id', required: true,
+            options: state.groups.map(g=>({value:g.id, label:g.name})),
+            value: busGroupId,
+            placeholder: 'Select a group',
+            onChange: data.id ? undefined : `openModal('bus',{...${JSON.stringify(data)}, group_id:this.value})`
+          })}
+        </div>
         <div class="two-col">
           <div class="field"><label>Leg</label>${customSelectHtml({ name:'leg', options:[{value:'airport_transfer',label:'Airport transfer'},{value:'mecca_madinah',label:'Mecca ↔ Madinah'},{value:'ziyarat',label:'Ziyarat'}], value:data.leg, searchable:false, onChange:'toggleBusTripField(this)' })}</div>
           <div class="field"><label>Bus number</label><input name="bus_number" value="${esc(data.bus_number||'')}" required/></div>
@@ -3022,10 +3068,10 @@ function renderModal(){
           <label>Trip name</label>
           ${customSelectHtml({
             name: 'trip_type_id',
-            options: [{value:'',label:'— None —'}, ...state.tripTypes.map(t=>({value:t.id, label:t.name}))],
+            options: [{value:'',label:'— None —'}, ...busGroupTripTypes.map(t=>({value:t.id, label:t.name}))],
             value: data.trip_type_id||''
           })}
-          ${!state.tripTypes.length ? `<p style="font-size:11px;color:#8a8168;margin-top:4px;">No trip types yet — add some via Manage trip types first.</p>` : ''}
+          ${!busGroupTripTypes.length ? `<p style="font-size:11px;color:#8a8168;margin-top:4px;">No trip types yet for this group — add some via Manage trip types first.</p>` : ''}
         </div>
         <div class="field">
           <label>Main helper / Sheikh</label>
@@ -3048,7 +3094,7 @@ function renderModal(){
     const occIds = new Set(busOccupants(bus.id).map(h=>h.id));
     const tripLabel = busTripLabel(bus);
     const helper = bus.helper_staff_id ? staffById(bus.helper_staff_id) : null;
-    const pool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis;
+    const pool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis.filter(h=>h.group_id===bus.group_id);
     const familiesMap = new Map();
     pool.forEach(h=>{
       const key = h.family_code || `__solo_${h.id}`;
