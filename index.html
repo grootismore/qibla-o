@@ -612,14 +612,16 @@ function applyRestoredView(){
   state.view = def ? def.activeViews[0] : 'dashboard';
 }
 async function loadAll(){
-  const { data: groups } = await sb.from('groups').select('*').order('departure_date', {ascending:true});
+  const [{data:groups},{data:hotels},{data:roleSettings},{data:staffList}] = await Promise.all([
+    sb.from('groups').select('*').order('departure_date', {ascending:true}),
+    sb.from('hotels').select('*').order('name'),
+    sb.from('role_settings').select('*'),
+    sb.from('staff').select('*').order('full_name'),
+  ]);
   state.groups = groups || [];
   if(!state.activeGroupId && state.groups.length) state.activeGroupId = state.groups[0].id;
-  const { data: hotels } = await sb.from('hotels').select('*').order('name');
   state.hotels = hotels || [];
-  const { data: roleSettings } = await sb.from('role_settings').select('*');
   state.roleSettings = roleSettings || [];
-  const { data: staffList } = await sb.from('staff').select('*').order('full_name');
   state.staffList = staffList || [];
   applyRestoredView();
   await loadGroupData();
@@ -683,6 +685,31 @@ function hajiRoom(hajiId, leg){
   const ra = state.roomAssignments.find(a => a.haji_id===hajiId && state.rooms.find(r=>r.id===a.room_id)?.hotel_leg===leg);
   return ra ? state.rooms.find(r=>r.id===ra.room_id) : null;
 }
+// Batch lookup builders: O(n) to build once per render pass, then O(1) per row —
+// avoids the O(n^2) blowup of calling hajiRoom/hajiPaid/hajiBus inside a per-haji loop.
+function hajiPaidMap(){
+  const map = new Map();
+  for(const p of state.payments) map.set(p.haji_id, (map.get(p.haji_id)||0) + Number(p.amount));
+  return map;
+}
+function hajiRoomMap(){
+  const roomsById = new Map(state.rooms.map(r=>[r.id, r]));
+  const map = new Map();
+  for(const a of state.roomAssignments){
+    const room = roomsById.get(a.room_id);
+    if(room) map.set(`${a.haji_id}|${room.hotel_leg}`, room);
+  }
+  return map;
+}
+function hajiBusMap(){
+  const busesById = new Map(state.buses.map(b=>[b.id, b]));
+  const map = new Map();
+  for(const a of state.busAssignments){
+    const bus = busesById.get(a.bus_id);
+    if(bus) map.set(a.haji_id, bus);
+  }
+  return map;
+}
 function roomOccupants(roomId){ return state.roomAssignments.filter(a=>a.room_id===roomId).map(a=>hajiById(a.haji_id)).filter(Boolean); }
 function busOccupants(busId){ return state.busAssignments.filter(a=>a.bus_id===busId).map(a=>hajiById(a.haji_id)).filter(Boolean); }
 function hajiBus(hajiId){
@@ -733,9 +760,9 @@ async function assignFamilyToBus(busId, familyCode){
   openModal('assignBus', {busId});
   showNotice(`Assigned all ${toAssign.length} family member${toAssign.length===1?'':'s'} to Bus ${bus.bus_number}.`, 'success');
 }
-function hajiSummaryLine(h){
-  const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
-  const bus = hajiBus(h.id);
+function hajiSummaryLine(h, maps){
+  const room = maps ? (maps.rooms.get(`${h.id}|mecca`) || maps.rooms.get(`${h.id}|madinah`)) : (hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah'));
+  const bus = maps ? maps.buses.get(h.id) : hajiBus(h.id);
   const parts = [];
   if(h.group_number) parts.push(esc(h.group_number));
   if(room) parts.push(`Room ${esc(room.room_number)}`);
@@ -1236,8 +1263,10 @@ function renderDashboard(){
   const totalDue = state.hajis.reduce((s,h)=>{ const pkg=packageById(h.package_id); return s+(pkg?Number(pkg.price):0); },0);
   const totalCollected = state.payments.reduce((s,p)=>s+Number(p.amount),0);
   const roomsAssigned = new Set(state.roomAssignments.map(a=>a.haji_id)).size;
-  const busAssignedM = new Set(state.busAssignments.filter(a=>state.buses.find(b=>b.id===a.bus_id)?.leg==='mecca_madinah').map(a=>a.haji_id)).size;
-  const unpaidCount = state.hajis.filter(h=>{ const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; return hajiPaid(h.id) < due; }).length;
+  const busesById = new Map(state.buses.map(b=>[b.id, b]));
+  const busAssignedM = new Set(state.busAssignments.filter(a=>busesById.get(a.bus_id)?.leg==='mecca_madinah').map(a=>a.haji_id)).size;
+  const paidMap = hajiPaidMap();
+  const unpaidCount = state.hajis.filter(h=>{ const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; return (paidMap.get(h.id)||0) < due; }).length;
 
   return `
     <h2 style="margin-bottom:4px;">${esc(g.name)}</h2>
@@ -1398,6 +1427,7 @@ async function deleteTripType(id){
 // ---------- HAJIS ----------
 function renderHajis(){
   if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
+  const maps = { rooms: hajiRoomMap(), buses: hajiBusMap() };
   return `
     <div class="toolbar">
       ${can('manageHajis') ? `<button class="primary" onclick="openModal('haji')">+ Add haji</button>` : ''}
@@ -1407,7 +1437,7 @@ function renderHajis(){
         <div class="summary-row" onclick="openModal('hajiDetail', hajiById('${h.id}'))">
           <div>
             <div class="summary-name">${esc(h.full_name)} ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</div>
-            <div class="summary-sub">${hajiSummaryLine(h)}</div>
+            <div class="summary-sub">${hajiSummaryLine(h, maps)}</div>
           </div>
           <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
         </div>
@@ -1571,8 +1601,8 @@ function handleCsvFileUpload(input){
   reader.readAsText(file);
 }
 
-function switchBulkImportEntity(sel){
-  openModal('bulkImport', {entity: sel.value, groupId: state.activeGroupId});
+function switchBulkImportEntity(entity){
+  openModal('bulkImport', {entity, groupId: state.activeGroupId});
 }
 
 function stripTempKeys(row){
@@ -2712,19 +2742,10 @@ function renderModal(){
     const entity = data.entity || 'hajis';
     const def = BULK_IMPORT_DEFS[entity];
     const needsGroup = BULK_IMPORT_GROUP_SCOPED.has(entity) && !data.groupId;
+    const otherEntities = Object.entries(BULK_IMPORT_ENTITY_LABELS).filter(([k])=>k!==entity);
     body = `
-      <h3>Bulk import</h3>
-      <div class="field">
-        <label>What to import</label>
-        ${customSelectHtml({
-          id: 'bulk-import-entity-modal',
-          options: Object.entries(BULK_IMPORT_ENTITY_LABELS).map(([k,label])=>({value:k, label})),
-          value: entity,
-          searchable: false,
-          onChange: 'switchBulkImportEntity(this)'
-        })}
-      </div>
-      <p style="font-size:12px;color:#6b6252;margin-top:8px;">${def.hint}</p>
+      <h3>${def.title}</h3>
+      <p style="font-size:12px;color:#6b6252;">${def.hint}</p>
       ${needsGroup ? `
         <div class="field" style="margin-top:14px;">
           <label>New group name (optional)</label>
@@ -2747,6 +2768,10 @@ function renderModal(){
         <button class="primary" style="flex:1" onclick="bulkImportCSV('${entity}'${data.groupId?`,'${data.groupId}'`:''})">Import</button>
         <button class="ghost" onclick="closeModal()">Cancel</button>
       </div>
+      <p style="font-size:11px;color:#8a8168;margin-top:12px;">
+        Importing something else?
+        ${otherEntities.map(([k,label])=>`<a href="#" onclick="event.preventDefault();switchBulkImportEntity('${k}')">${esc(label)}</a>`).join(' &middot; ')}
+      </p>
     `;
   } else if(type==='room'){
     body = `
@@ -2861,6 +2886,7 @@ function renderModal(){
       <button class="ghost" style="width:100%;margin-top:12px;" onclick="closeModal()">Done</button>
     `;
   } else if(type==='payment'){
+    const paidMap = hajiPaidMap();
     body = `
       <h3>Record payment</h3>
       <form onsubmit="savePayment(event)">
@@ -2868,7 +2894,7 @@ function renderModal(){
           ${customSelectHtml({
             name: 'haji_id', required: true,
             options: state.hajis.map(h=>{
-              const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; const bal=due-hajiPaid(h.id);
+              const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; const bal=due-(paidMap.get(h.id)||0);
               return {value:h.id, label:`${h.full_name} — balance ${fmt(bal)}`};
             })
           })}
