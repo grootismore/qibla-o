@@ -458,7 +458,7 @@ async function loadMyRole(){
 }
 
 function roleLabel(role){
-  const labels = { super_admin:'Super Admin', admin:'Admin', agent:'Agent', accountant:'Accountant', haji:'Pilgrim' };
+  const labels = { super_admin:'Senior Sheikh', admin:'Sheikh', agent:'Helper', accountant:'Accountant', haji:'Pilgrim' };
   return labels[role] || role || '—';
 }
 function titleCase(s){ return (s||'').replace(/_/g,' ').replace(/\b\w/g, c=>c.toUpperCase()); }
@@ -542,12 +542,12 @@ async function signUp(email, password, fullName){
   const role = count === 0 ? 'super_admin' : 'agent';
   const { error: staffErr } = await sb.from('staff').insert({ id: data.user.id, full_name: fullName, role });
   if(staffErr){
-    showNotice(`Your login was created, but we couldn't set up your access (${staffErr.message}). Ask an existing admin to add you under Staff.`, 'error');
+    showNotice(`Your login was created, but we couldn't set up your access (${staffErr.message}). Ask an existing Sheikh to add you under Staff.`, 'error');
     return;
   }
   showNotice(role==='super_admin'
-    ? "Account created — you're the first user, so you've been made Super Admin (system owner)."
-    : "Account created with basic access. An admin can upgrade your role in Staff once you're set up.", 'success');
+    ? "Account created — you're the first user, so you've been made Senior Sheikh (system owner)."
+    : "Account created with basic access. A Sheikh can upgrade your role in Staff once you're set up.", 'success');
 }
 function hajiLoginEmail(passportNo){
   return (passportNo||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'') + '@hajis.rihla.local';
@@ -594,6 +594,7 @@ async function loadMyHajiData(){
 }
 
 let appliedDefaultView = false;
+let lastRenderedView = null;
 function applyRestoredView(){
   if(appliedDefaultView) return;
   appliedDefaultView = true;
@@ -1049,6 +1050,7 @@ function render(){
     ${state.modal ? renderModal() : ''}
   `;
   const content = document.getElementById('content');
+  const enteringStaffView = state.view==='staff' && lastRenderedView!=='staff';
   if(state.view==='dashboard') content.innerHTML = renderDashboard();
   else if(state.view==='groups') content.innerHTML = renderGroups();
   else if(state.view==='hajis') content.innerHTML = renderHajis();
@@ -1058,8 +1060,9 @@ function render(){
   else if(state.view==='tripCollector') content.innerHTML = renderTripCollector();
   else if(state.view==='tripSummary') content.innerHTML = renderTripSummary();
   else if(state.view==='tripDateReport') content.innerHTML = renderTripDateReport();
-  else if(state.view==='staff') { content.innerHTML = renderStaff(); if(navigator.onLine) loadStaffList(); }
+  else if(state.view==='staff') { content.innerHTML = renderStaff(); if(enteringStaffView && navigator.onLine) loadStaffList(); }
   else if(state.view==='settings') content.innerHTML = renderSettings();
+  lastRenderedView = state.view;
   persistViewState();
 }
 
@@ -1105,7 +1108,7 @@ function renderAuth(){
           <button class="${state.authMode==='haji'?'primary':'ghost'}" style="flex:1" onclick="setAuthMode('haji')">Pilgrim</button>
         </div>
         ${state.authMode==='staff' ? `
-          <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Sign in if you already have an account. New here? Create one below — the very first account on Rihla becomes the system owner; everyone after that starts with basic access until an admin sets their role.</p>
+          <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Sign in if you already have an account. New here? Create one below — the very first account on Rihla becomes the system owner; everyone after that starts with basic access until a Sheikh sets their role.</p>
           <div class="field"><label>Full name (for new staff account)</label><input id="auth-name" placeholder="Your name" autocomplete="name"/></div>
           <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" autofocus/></div>
           <div class="field"><label>Password</label><input id="auth-pass" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
@@ -2216,18 +2219,18 @@ function renderStaff(){
             const canEdit = state.myRole==='super_admin' || (state.myRole==='admin' && !targetIsProtected);
             const locked = isSelf || !canEdit;
             const options = (state.myRole==='super_admin' || locked)
-              ? [['super_admin','Super Admin'],['admin','Admin'],['agent','Agent (hajis/rooms/buses)'],['accountant','Accountant (payments)']]
-              : [['agent','Agent (hajis/rooms/buses)'],['accountant','Accountant (payments)']];
+              ? [['super_admin','Senior Sheikh'],['admin','Sheikh'],['agent','Helper'],['accountant','Accountant']]
+              : [['agent','Helper'],['accountant','Accountant']];
             return `
             <tr>
-              <td>${esc(s.full_name||'—')} ${isSelf?'<span class="pill ok">You</span>':''} ${s.role==='super_admin'?'<span class="pill warn">Super Admin</span>':''}</td>
+              <td>${esc(s.full_name||'—')} ${isSelf?'<span class="pill ok">You</span>':''} ${s.role==='super_admin'?'<span class="pill warn">Senior Sheikh</span>':''}</td>
               <td data-label="Role">
                 ${customSelectHtml({
                   options: options.map(([val,label])=>({value:val, label})),
                   value: s.role, disabled: locked, searchable: false,
                   onChange: `updateStaffRole('${s.id}', this.value)`
                 })}
-                ${(!isSelf && !canEdit) ? '<div style="font-size:11px;color:#8a8168;margin-top:4px;">Only a super admin can change this.</div>' : ''}
+                ${(!isSelf && !canEdit) ? '<div style="font-size:11px;color:#8a8168;margin-top:4px;">Only a Senior Sheikh can change this.</div>' : ''}
               </td>
             </tr>
           `;}).join('') || `<tr><td colspan="2" class="empty">No staff accounts yet.</td></tr>`}
@@ -2245,7 +2248,7 @@ async function updateStaffRole(id, role){
 // ---------- SETTINGS ----------
 function renderSettings(){
   if(state.myRole!=='super_admin'){
-    return `<div class="empty"><h3>Not authorized</h3><p>Only super admins can access Settings.</p></div>`;
+    return `<div class="empty"><h3>Not authorized</h3><p>Only a Senior Sheikh can access Settings.</p></div>`;
   }
   return `
     <h2 style="margin-bottom:16px;">Settings</h2>
@@ -2255,7 +2258,7 @@ function renderSettings(){
       const visible = rs.visible_views || permitted.map(d=>d.key);
       return `
         <div class="card" style="margin-bottom:16px;max-width:520px;">
-          <h3 style="text-transform:capitalize;margin-bottom:12px;">${esc(role)}</h3>
+          <h3 style="margin-bottom:12px;">${esc(roleLabel(role))}</h3>
           <div class="field">
             <label>Default landing page</label>
             ${customSelectHtml({
