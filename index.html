@@ -103,12 +103,12 @@
   .assign-list{max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;}
   .assign-row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);}
   .assign-row:last-child{border-bottom:none;}
-  .haji-list{display:flex;flex-direction:column;gap:8px;}
-  .haji-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border:1px solid var(--line);border-radius:10px;background:#fffdf7;cursor:pointer;transition:background .1s ease;}
-  .haji-row:hover{background:var(--sand-deep);}
-  .haji-name{font-weight:700;color:var(--ink);}
-  .haji-summary{font-size:12px;color:#8a8168;margin-top:3px;}
-  .haji-chevron{color:#8a8168;flex-shrink:0;}
+  .summary-list{display:flex;flex-direction:column;gap:8px;}
+  .summary-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border:1px solid var(--line);border-radius:10px;background:#fffdf7;cursor:pointer;transition:background .1s ease;}
+  .summary-row:hover{background:var(--sand-deep);}
+  .summary-name{font-weight:700;color:var(--ink);}
+  .summary-sub{font-size:12px;color:#8a8168;margin-top:3px;}
+  .summary-chevron{color:#8a8168;flex-shrink:0;}
   .detail-list{display:flex;flex-direction:column;gap:10px;}
   .detail-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-bottom:9px;border-bottom:1px solid var(--line);}
   .detail-row:last-child{border-bottom:none;padding-bottom:0;}
@@ -579,6 +579,13 @@ function hajiSummaryLine(h){
   if(room) parts.push(`Room ${esc(room.room_number)}`);
   if(bus) parts.push(`Bus ${esc(bus.bus_number)}`);
   return parts.join(' • ') || 'No group, room, or bus assigned yet';
+}
+function groupSummaryLine(g){
+  const parts = [];
+  if(g.departure_date) parts.push(`Departs ${g.departure_date}`);
+  if(g.mecca_hotel) parts.push(esc(g.mecca_hotel));
+  if(g.madinah_hotel) parts.push(esc(g.madinah_hotel));
+  return parts.join(' • ') || 'No dates or hotels set yet';
 }
 function tripsForPayment(paymentId){ return state.paymentTripItems.filter(t=>t.payment_id===paymentId); }
 function ageCategory(age){
@@ -1080,23 +1087,16 @@ function renderGroups(){
       ${can('manageGroups') ? `<button class="primary" onclick="openModal('group')">+ New group</button>
       <button class="ghost" onclick="openModal('hotels')">Manage hotels</button>` : ''}
     </div>
-    <div class="card table-wrap">
-      <table>
-        <thead><tr><th>Name</th><th>Departure</th><th>Return</th><th>Mecca hotel</th><th>Madinah hotel</th><th>Packages</th><th></th></tr></thead>
-        <tbody>
-          ${state.groups.map(g=>`
-            <tr>
-              <td><strong>${esc(g.name)}</strong></td>
-              <td data-label="Departure">${g.departure_date||'—'}</td>
-              <td data-label="Return">${g.return_date||'—'}</td>
-              <td data-label="Mecca hotel">${esc(g.mecca_hotel||'—')}</td>
-              <td data-label="Madinah hotel">${esc(g.madinah_hotel||'—')}</td>
-              <td data-label="Packages"><button class="ghost" onclick="openModal('packages',{groupId:'${g.id}'})" ${can('managePackages')?'':'disabled'}>Manage${g.id===state.activeGroupId?` <span class="badge-count">${state.packages.length}</span>`:''}</button></td>
-              <td class="row-actions">${can('manageGroups')?`<button class="ghost" onclick="openModal('group', state.groups.find(x=>x.id==='${g.id}'))">Edit</button>`:''}</td>
-            </tr>
-          `).join('') || `<tr><td colspan="7" class="empty">No groups yet — create your first Umrah batch.</td></tr>`}
-        </tbody>
-      </table>
+    <div class="summary-list">
+      ${state.groups.map(g=>`
+        <div class="summary-row" onclick="openModal('groupDetail', state.groups.find(x=>x.id==='${g.id}'))">
+          <div>
+            <div class="summary-name">${esc(g.name)} ${g.id===state.activeGroupId?'<span class="pill ok">Active</span>':''}</div>
+            <div class="summary-sub">${groupSummaryLine(g)}</div>
+          </div>
+          <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
+        </div>
+      `).join('') || `<div class="empty">No groups yet — create your first Umrah batch.</div>`}
     </div>
   `;
 }
@@ -1219,14 +1219,14 @@ function renderHajis(){
     <div class="toolbar">
       ${can('manageHajis') ? `<button class="primary" onclick="openModal('haji')">+ Add haji</button>` : ''}
     </div>
-    <div class="haji-list">
+    <div class="summary-list">
       ${state.hajis.map(h=>`
-        <div class="haji-row" onclick="openModal('hajiDetail', hajiById('${h.id}'))">
+        <div class="summary-row" onclick="openModal('hajiDetail', hajiById('${h.id}'))">
           <div>
-            <div class="haji-name">${esc(h.full_name)} ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</div>
-            <div class="haji-summary">${hajiSummaryLine(h)}</div>
+            <div class="summary-name">${esc(h.full_name)} ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</div>
+            <div class="summary-sub">${hajiSummaryLine(h)}</div>
           </div>
-          <svg class="haji-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
+          <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
         </div>
       `).join('') || `<div class="empty">No hajis in this group yet.</div>`}
     </div>
@@ -2080,7 +2080,25 @@ async function toggleRoleVisibleItem(role, key, checked){
 function renderModal(){
   const {type, data} = state.modal;
   let body = '';
-  if(type==='group'){
+  if(type==='groupDetail'){
+    const g = data;
+    const detailRow = (label, value) => `<div class="detail-row"><span class="detail-label">${label}</span><span class="detail-value">${value}</span></div>`;
+    body = `
+      <h3>${esc(g.name)}</h3>
+      ${g.id===state.activeGroupId ? `<div style="margin-bottom:12px;"><span class="pill ok">Active group</span></div>` : ''}
+      <div class="detail-list" style="margin-bottom:16px;">
+        ${detailRow('Departure', esc(g.departure_date||'—'))}
+        ${detailRow('Return', esc(g.return_date||'—'))}
+        ${detailRow('Mecca hotel', esc(g.mecca_hotel||'—'))}
+        ${detailRow('Madinah hotel', esc(g.madinah_hotel||'—'))}
+      </div>
+      <button class="ghost" style="width:100%;margin-bottom:8px;" onclick="openModal('packages',{groupId:'${g.id}'})" ${can('managePackages')?'':'disabled'}>Manage packages${g.id===state.activeGroupId?` <span class="badge-count">${state.packages.length}</span>`:''}</button>
+      <div style="display:flex;gap:8px;">
+        ${can('manageGroups') ? `<button class="primary" style="flex:1" onclick="openModal('group', state.groups.find(x=>x.id==='${g.id}'))">Edit</button>` : ''}
+        <button class="ghost" style="flex:1" onclick="closeModal()">Close</button>
+      </div>
+    `;
+  } else if(type==='group'){
     body = `
       <h3>${data.id?'Edit group':'New group'}</h3>
       <form onsubmit="saveGroup(event, ${data.id?`'${data.id}'`:'null'})">
