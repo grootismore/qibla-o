@@ -1473,16 +1473,23 @@ const BULK_IMPORT_DEFS = {
   hajis: {
     table: 'hajis',
     title: 'Bulk import hajis',
-    hint: 'One per line: <span class="mono">Full name, Passport no, Phone, Gender, Family code, Flight no, Group no, Q no, Room no</span><br/>Room no auto-assigns the pilgrim, creating the room (Mecca, capacity 4, family) if it doesn\'t exist yet — leave blank to skip.',
-    placeholder: 'Ahmed Ismail, A1234567, 7771234, male, FAM01, EK625, G1, Q-00231, 1204',
-    parse(line){
-      const [full_name, passport_no, phone, gender, family_code, flight_number, group_number, q_number, room_number] = parseCsvLine(line);
-      return full_name ? {
-        group_id: state.activeGroupId, full_name, passport_no, phone,
+    hint: 'One per line: <span class="mono">Full name, Passport no, Phone, Gender, Group name, Room no, Package, Family code, Flight no, Group no, Q no, Age, Elderly (y/n), Wheelchair (y/n), Notes</span><br/>Group name, Room no, and Package are auto-created if they don\'t exist yet — each can be left blank (Group falls back to the group picked above). "Group no" is a separate flight/manifest number, not the app Group.',
+    placeholder: 'Ahmed Ismail, A1234567, 7771234, male, Batch 3 - September, 1204, Quad sharing, FAM01, EK625, G1, Q-00231, 54, yes, no, Needs ground floor room',
+    parse(line, groupId){
+      const [full_name, passport_no, phone, gender, group_name, room_number, package_name, family_code, flight_number, group_number, q_number, age, elderly, wheelchair, notes] = parseCsvLine(line);
+      if(!full_name) return null;
+      const isYes = v => ['y','yes','true','1'].includes((v||'').trim().toLowerCase());
+      return {
+        group_id: groupId, full_name, passport_no, phone,
         gender: (gender||'').toLowerCase()==='female'?'female':'male', family_code,
         flight_number: flight_number||null, group_number: group_number||null, q_number: q_number||null,
-        _roomNumber: room_number||null
-      } : null;
+        age: age?.trim() ? (parseInt(age,10)||null) : null,
+        is_elderly: isYes(elderly), needs_wheelchair: isYes(wheelchair),
+        notes: notes||'',
+        _groupName: group_name?.trim() || null,
+        _roomNumber: room_number?.trim() || null,
+        _packageName: package_name?.trim() || null
+      };
     }
   },
   rooms: {
@@ -1578,7 +1585,15 @@ async function bulkImportCSV(entity, groupId){
   const text = document.getElementById('csv-text').value.trim();
   if(!text || !def) return;
 
-  if(BULK_IMPORT_GROUP_SCOPED.has(entity) && !groupId){
+  let rawLines = text.split('\n').map(l=>l.trim()).filter(Boolean);
+  if(document.getElementById('csv-has-header')?.checked) rawLines = rawLines.slice(1);
+  // A haji sheet where every row names its own Group doesn't need a fallback group created.
+  const needsFallbackGroup = entity!=='hajis' || rawLines.some(line=>{
+    const p = def.parse(line, null);
+    return p && !p._groupName;
+  });
+
+  if(BULK_IMPORT_GROUP_SCOPED.has(entity) && !groupId && needsFallbackGroup){
     const typedName = document.getElementById('bulk-import-group-name')?.value.trim();
     const newGroupName = typedName || `Imported Group — ${new Date().toLocaleString()}`;
     const existingGroup = state.groups.find(g=>g.name.toLowerCase()===newGroupName.toLowerCase());
@@ -1594,29 +1609,80 @@ async function bulkImportCSV(entity, groupId){
     await loadGroupData();
   }
 
-  let lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
-  if(document.getElementById('csv-has-header')?.checked) lines = lines.slice(1);
-  const parsed = lines.map(line=>def.parse(line, groupId)).filter(Boolean);
+  const parsed = rawLines.map(line=>def.parse(line, groupId)).filter(Boolean);
   let rows = parsed.map(stripTempKeys);
 
   if(rows.length){
     if(entity==='hajis'){
+      // Resolve/create a Group per unique group name in the sheet (falls back to the batch group when blank).
+      const groupCache = new Map(state.groups.map(g=>[g.name.toLowerCase(), g]));
+      for(const p of parsed){
+        if(!p._groupName){ p._resolvedGroupId = groupId; continue; }
+        let g = groupCache.get(p._groupName.toLowerCase());
+        if(!g){
+          const { data: newGroup, error: gErr } = await sb.from('groups').insert({name: p._groupName}).select().single();
+          if(gErr || !newGroup){ p._resolvedGroupId = groupId; continue; }
+          g = newGroup;
+          groupCache.set(p._groupName.toLowerCase(), g);
+          state.groups.push(g);
+        }
+        p._resolvedGroupId = g.id;
+      }
+
+      // Resolve/create a Room per unique (group, room number) pair.
+      const roomCache = new Map();
+      for(const p of parsed){
+        if(!p._roomNumber || !p._resolvedGroupId) continue;
+        const key = `${p._resolvedGroupId}|${p._roomNumber.toLowerCase()}`;
+        if(roomCache.has(key)) continue;
+        let room = p._resolvedGroupId===state.activeGroupId
+          ? state.rooms.find(r=>r.room_number.toLowerCase()===p._roomNumber.toLowerCase())
+          : null;
+        if(!room){
+          const { data: existing } = await sb.from('rooms').select('*').eq('group_id', p._resolvedGroupId).ilike('room_number', p._roomNumber).maybeSingle();
+          room = existing || null;
+        }
+        if(!room){
+          const { data: newRoom, error: roomErr } = await sb.from('rooms').insert({ group_id: p._resolvedGroupId, hotel_leg:'mecca', room_number: p._roomNumber, capacity:4, gender:'family' }).select().single();
+          if(!roomErr && newRoom) room = newRoom;
+        }
+        if(room){ roomCache.set(key, room); if(p._resolvedGroupId===state.activeGroupId) state.rooms.push(room); }
+      }
+
+      // Resolve/create a Package per unique (group, package name) pair.
+      const packageCache = new Map();
+      for(const p of parsed){
+        if(!p._packageName || !p._resolvedGroupId) continue;
+        const key = `${p._resolvedGroupId}|${p._packageName.toLowerCase()}`;
+        if(packageCache.has(key)) continue;
+        let pkg = p._resolvedGroupId===state.activeGroupId
+          ? state.packages.find(x=>x.name.toLowerCase()===p._packageName.toLowerCase())
+          : null;
+        if(!pkg){
+          const { data: existing } = await sb.from('packages').select('*').eq('group_id', p._resolvedGroupId).ilike('name', p._packageName).maybeSingle();
+          pkg = existing || null;
+        }
+        if(!pkg){
+          const { data: newPkg, error: pkgErr } = await sb.from('packages').insert({ group_id: p._resolvedGroupId, name: p._packageName, price: 0 }).select().single();
+          if(!pkgErr && newPkg) pkg = newPkg;
+        }
+        if(pkg){ packageCache.set(key, pkg); if(p._resolvedGroupId===state.activeGroupId) state.packages.push(pkg); }
+      }
+
+      rows = parsed.map(p=>({
+        ...stripTempKeys(p),
+        group_id: p._resolvedGroupId,
+        package_id: p._packageName && p._resolvedGroupId ? (packageCache.get(`${p._resolvedGroupId}|${p._packageName.toLowerCase()}`)?.id||null) : null
+      }));
       const { data, error } = await sb.from(def.table).insert(rows).select();
       if(error){ showNotice(error.message, 'error'); return; }
-      const roomCache = new Map(state.rooms.map(r=>[r.room_number, r]));
+
       const assignments = [];
       for(let i=0; i<(data||[]).length; i++){
-        const roomNumber = parsed[i]?._roomNumber;
-        if(!roomNumber) continue;
-        let room = roomCache.get(roomNumber);
-        if(!room){
-          const { data: newRoom, error: roomErr } = await sb.from('rooms').insert({ group_id: groupId, hotel_leg:'mecca', room_number: roomNumber, capacity:4, gender:'family' }).select().single();
-          if(roomErr || !newRoom) continue;
-          room = newRoom;
-          roomCache.set(roomNumber, room);
-          state.rooms.push(room);
-        }
-        assignments.push({ room_id: room.id, haji_id: data[i].id });
+        const p = parsed[i];
+        if(!p._roomNumber || !p._resolvedGroupId) continue;
+        const room = roomCache.get(`${p._resolvedGroupId}|${p._roomNumber.toLowerCase()}`);
+        if(room) assignments.push({ room_id: room.id, haji_id: data[i].id });
       }
       if(assignments.length) await sb.from('room_assignments').insert(assignments);
     } else if(entity==='buses'){
