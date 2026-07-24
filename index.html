@@ -613,6 +613,8 @@ async function loadAll(){
   state.hotels = hotels || [];
   const { data: roleSettings } = await sb.from('role_settings').select('*');
   state.roleSettings = roleSettings || [];
+  const { data: staffList } = await sb.from('staff').select('*').order('full_name');
+  state.staffList = staffList || [];
   applyRestoredView();
   await loadGroupData();
   render();
@@ -668,6 +670,7 @@ async function switchGroup(id){
 
 // ---------- HELPERS ----------
 function hajiById(id){ return state.hajis.find(h=>h.id===id); }
+function staffById(id){ return state.staffList.find(s=>s.id===id); }
 function packageById(id){ return state.packages.find(p=>p.id===id); }
 function hajiPaid(hajiId){ return state.payments.filter(p=>p.haji_id===hajiId).reduce((s,p)=>s+Number(p.amount),0); }
 function hajiRoom(hajiId, leg){
@@ -1448,15 +1451,16 @@ const BULK_IMPORT_DEFS = {
   buses: {
     table: 'buses',
     title: 'Bulk import buses',
-    hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Driver name, Capacity, Trip name (ziyarat only)</span><br/>Trip name is matched against trip types already added for this group.',
+    hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Helper name, Capacity, Trip name (ziyarat only)</span><br/>Helper and trip name are matched against staff/trip types already added — the helper counts toward capacity.',
     placeholder: 'ziyarat, B-12, Ali Hassan, 45, Hira',
     parse(line){
-      const [leg, bus_number, driver_name, capacity, tripName] = parseCsvLine(line);
+      const [leg, bus_number, helperName, capacity, tripName] = parseCsvLine(line);
       if(!bus_number) return null;
       const legs = ['airport_transfer','mecca_madinah','ziyarat'];
       const normalizedLeg = legs.includes((leg||'').toLowerCase())?leg.toLowerCase():'airport_transfer';
       const trip = normalizedLeg==='ziyarat' && tripName ? state.tripTypes.find(t=>t.name.toLowerCase()===tripName.toLowerCase()) : null;
-      return { group_id: state.activeGroupId, leg: normalizedLeg, bus_number, driver_name, capacity: parseInt(capacity||'45'), trip_type_id: trip?trip.id:null };
+      const helper = helperName ? state.staffList.find(s=>s.full_name.toLowerCase()===helperName.toLowerCase()) : null;
+      return { group_id: state.activeGroupId, leg: normalizedLeg, bus_number, helper_staff_id: helper?helper.id:null, capacity: parseInt(capacity||'45'), trip_type_id: trip?trip.id:null };
     }
   },
   hotels: {
@@ -1620,16 +1624,18 @@ async function toggleRoomAssign(roomId, hajiId, assign){
 function busCardsHtml(buses, leg){
   return buses.map(b=>{
     const occ = busOccupants(b.id);
-    const over = occ.length > b.capacity;
+    const helper = b.helper_staff_id ? staffById(b.helper_staff_id) : null;
+    const total = occ.length + (helper?1:0);
+    const over = total > b.capacity;
     const trip = leg==='ziyarat' ? state.tripTypes.find(t=>t.id===b.trip_type_id) : null;
     return `<div class="card">
       <div style="display:flex;justify-content:space-between;">
         <strong>Bus ${esc(b.bus_number)}</strong>
-        <span class="pill ${over?'bad':'ok'}">${occ.length}/${b.capacity}</span>
+        <span class="pill ${over?'bad':'ok'}">${total}/${b.capacity}</span>
       </div>
       ${trip ? `<div style="margin:4px 0;"><span class="pill warn">${esc(trip.name)}</span></div>` : ''}
-      <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Driver: ${esc(b.driver_name||'—')}</div>
-      <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,occ.length/b.capacity*100)}%"></div></div>
+      <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Helper: ${helper?`${esc(helper.full_name)} (${esc(roleLabel(helper.role))})`:'—'}</div>
+      <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,total/b.capacity*100)}%"></div></div>
       <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('assignBus',{busId:'${b.id}'})" ${can('manageBuses')?'':'disabled'}>Assign pilgrims</button>
       ${can('manageBuses') ? `
         <div style="display:flex;gap:8px;margin-top:8px;">
@@ -1677,7 +1683,7 @@ async function saveBus(e, id){
   const f = e.target;
   const payload = {
     bus_number: f.bus_number.value, leg: f.leg.value,
-    driver_name: f.driver_name.value, capacity: parseInt(f.capacity.value||'45'),
+    helper_staff_id: f.helper_staff_id.value||null, capacity: parseInt(f.capacity.value||'45'),
     trip_type_id: f.leg.value==='ziyarat' ? (f.trip_type_id.value||null) : null
   };
   let error;
@@ -2524,10 +2530,16 @@ function renderModal(){
           })}
           ${!state.tripTypes.length ? `<p style="font-size:11px;color:#8a8168;margin-top:4px;">No trip types yet — add some via Manage trip types first.</p>` : ''}
         </div>
-        <div class="two-col">
-          <div class="field"><label>Driver name</label><input name="driver_name" value="${esc(data.driver_name||'')}"/></div>
-          <div class="field"><label>Capacity</label><input type="number" name="capacity" value="${data.capacity??45}"/></div>
+        <div class="field">
+          <label>Main helper / Sheikh</label>
+          ${customSelectHtml({
+            name: 'helper_staff_id',
+            options: [{value:'',label:'— None —'}, ...state.staffList.map(s=>({value:s.id, label:`${s.full_name} (${roleLabel(s.role)})`}))],
+            value: data.helper_staff_id||''
+          })}
+          <p style="font-size:11px;color:#8a8168;margin-top:4px;">Counts as one passenger toward capacity.</p>
         </div>
+        <div class="field"><label>Capacity</label><input type="number" name="capacity" value="${data.capacity??45}"/></div>
         <div style="display:flex;gap:8px;margin-top:16px;">
           <button type="submit" class="primary" style="flex:1">Save</button>
           <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
@@ -2538,8 +2550,12 @@ function renderModal(){
     const bus = state.buses.find(b=>b.id===data.busId);
     const occIds = new Set(busOccupants(bus.id).map(h=>h.id));
     const tripLabel = busTripLabel(bus);
+    const helper = bus.helper_staff_id ? staffById(bus.helper_staff_id) : null;
     body = `
       <h3>Assign to Bus ${esc(bus.bus_number)}${tripLabel?` — ${esc(tripLabel)}`:''}</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:12px;">
+        Helper: ${helper?esc(helper.full_name):'—'} · ${occIds.size + (helper?1:0)}/${bus.capacity} seats used
+      </p>
       <div class="assign-list">
         ${state.hajis.map(h=>`
           <div class="assign-row">
