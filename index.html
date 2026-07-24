@@ -104,6 +104,11 @@
   .assign-list{max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:8px;}
   .assign-row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);}
   .assign-row:last-child{border-bottom:none;}
+  .family-cluster{border-bottom:2px solid var(--line);}
+  .family-cluster:last-child{border-bottom:none;}
+  .family-cluster-header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 10px;background:var(--sand-deep);}
+  .family-cluster-header button{padding:4px 9px;font-size:11px;}
+  .family-warning{font-size:11px;color:var(--danger);padding:3px 10px;background:#fdf6f0;}
   .summary-list{display:flex;flex-direction:column;gap:8px;}
   .summary-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px;border:1px solid var(--line);border-radius:10px;background:#fffdf7;cursor:pointer;transition:background .1s ease;}
   .summary-row:hover{background:var(--sand-deep);}
@@ -686,6 +691,46 @@ function hajiBus(hajiId){
 function busTripLabel(bus){
   if(!bus || bus.leg!=='ziyarat') return null;
   return state.tripTypes.find(t=>t.id===bus.trip_type_id)?.name || null;
+}
+function hajisForTrip(tripTypeId){
+  const paidPaymentIds = new Set(state.paymentTripItems.filter(pti=>pti.trip_type_id===tripTypeId).map(pti=>pti.payment_id));
+  const hajiIds = new Set(state.payments.filter(p=>paidPaymentIds.has(p.id)).map(p=>p.haji_id));
+  return state.hajis.filter(h=>hajiIds.has(h.id));
+}
+function busRemainingCapacity(bus){
+  return bus.capacity - busOccupants(bus.id).length - (bus.helper_staff_id?1:0);
+}
+function familyBusSplit(familyCode, tripTypeId, excludeBusId){
+  if(!familyCode) return [];
+  return state.buses
+    .filter(b=>b.trip_type_id===tripTypeId && b.id!==excludeBusId)
+    .map(b=>({ bus:b, members: busOccupants(b.id).filter(h=>h.family_code===familyCode) }))
+    .filter(s=>s.members.length);
+}
+async function assignFamilyToBus(busId, familyCode){
+  if(!requireOnline()) return;
+  const bus = state.buses.find(b=>b.id===busId);
+  const pool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis;
+  const familyHajis = familyCode ? pool.filter(h=>h.family_code===familyCode) : [];
+  const alreadyOn = new Set(busOccupants(busId).map(h=>h.id));
+  const toAssign = familyHajis.filter(h=>!alreadyOn.has(h.id));
+  if(!toAssign.length){ showNotice('Everyone in this family is already on this bus.', 'success'); return; }
+  const remaining = busRemainingCapacity(bus);
+  if(toAssign.length > remaining){
+    const alternatives = bus.trip_type_id
+      ? state.buses.filter(b=>b.id!==bus.id && b.trip_type_id===bus.trip_type_id && busRemainingCapacity(b)>=toAssign.length)
+      : [];
+    const altText = alternatives.length
+      ? ` Other buses with room for the whole family: ${alternatives.map(b=>`${b.bus_number} (${busRemainingCapacity(b)} left)`).join(', ')}.`
+      : ' No other bus for this trip currently has room for the whole family either — you may need to split them.';
+    showNotice(`Only ${remaining} of ${toAssign.length} seat${toAssign.length===1?'':'s'} left on Bus ${bus.bus_number} for this family.${altText}`, 'error');
+    return;
+  }
+  const { error } = await sb.from('bus_assignments').insert(toAssign.map(h=>({bus_id:busId, haji_id:h.id})));
+  if(error){ showNotice(error.message, 'error'); return; }
+  await loadGroupData();
+  openModal('assignBus', {busId});
+  showNotice(`Assigned all ${toAssign.length} family member${toAssign.length===1?'':'s'} to Bus ${bus.bus_number}.`, 'success');
 }
 function hajiSummaryLine(h){
   const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
@@ -2551,18 +2596,44 @@ function renderModal(){
     const occIds = new Set(busOccupants(bus.id).map(h=>h.id));
     const tripLabel = busTripLabel(bus);
     const helper = bus.helper_staff_id ? staffById(bus.helper_staff_id) : null;
+    const pool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis;
+    const familiesMap = new Map();
+    pool.forEach(h=>{
+      const key = h.family_code || `__solo_${h.id}`;
+      if(!familiesMap.has(key)) familiesMap.set(key, []);
+      familiesMap.get(key).push(h);
+    });
+    const families = [...familiesMap.entries()]
+      .map(([key,members])=>({ familyCode: key.startsWith('__solo_')?null:key, members: members.sort((a,b)=>a.full_name.localeCompare(b.full_name)) }))
+      .sort((a,b)=>(a.familyCode||'￿').localeCompare(b.familyCode||'￿'));
     body = `
       <h3>Assign to Bus ${esc(bus.bus_number)}${tripLabel?` — ${esc(tripLabel)}`:''}</h3>
       <p style="font-size:12px;color:#6b6252;margin-bottom:12px;">
         Helper: ${helper?esc(helper.full_name):'—'} · ${occIds.size + (helper?1:0)}/${bus.capacity} seats used
+        ${bus.trip_type_id ? ` · Showing pilgrims booked for ${esc(tripLabel||'this trip')}` : ''}
       </p>
       <div class="assign-list">
-        ${state.hajis.map(h=>`
-          <div class="assign-row">
-            <span>${esc(h.full_name)}</span>
-            <input type="checkbox" style="width:auto;" ${occIds.has(h.id)?'checked':''} onchange="toggleBusAssign('${bus.id}','${h.id}',this.checked)"/>
-          </div>
-        `).join('') || '<div class="empty">No hajis yet</div>'}
+        ${families.map(fam=>{
+          const assignedHere = fam.members.filter(h=>occIds.has(h.id)).length;
+          const splitElsewhere = bus.trip_type_id ? familyBusSplit(fam.familyCode, bus.trip_type_id, bus.id) : [];
+          return `
+            <div class="family-cluster">
+              ${fam.familyCode ? `
+                <div class="family-cluster-header">
+                  <span><strong>${esc(fam.familyCode)}</strong> <span class="pill ${assignedHere===fam.members.length?'ok':'warn'}">${assignedHere}/${fam.members.length} here</span></span>
+                  ${assignedHere<fam.members.length ? `<button class="ghost" onclick="assignFamilyToBus('${bus.id}','${esc(fam.familyCode)}')">Assign whole family</button>` : ''}
+                </div>
+                ${splitElsewhere.length ? `<div class="family-warning">⚠ Also on ${splitElsewhere.map(s=>`Bus ${esc(s.bus.bus_number)} (${s.members.length})`).join(', ')}</div>` : ''}
+              ` : ''}
+              ${fam.members.map(h=>`
+                <div class="assign-row">
+                  <span>${esc(h.full_name)}</span>
+                  <input type="checkbox" style="width:auto;" ${occIds.has(h.id)?'checked':''} onchange="toggleBusAssign('${bus.id}','${h.id}',this.checked)"/>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        }).join('') || `<div class="empty">${bus.trip_type_id ? 'No pilgrims have booked this trip yet' : 'No hajis yet'}</div>`}
       </div>
       <button class="ghost" style="width:100%;margin-top:12px;" onclick="closeModal()">Done</button>
     `;
