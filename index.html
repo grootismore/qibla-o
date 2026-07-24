@@ -1265,6 +1265,26 @@ async function saveHaji(e, id){
   closeModal(); await loadGroupData(); render();
 }
 
+function parseCsvLine(line){
+  const cells = [];
+  let cur = '', inQuotes = false;
+  for(let i=0;i<line.length;i++){
+    const c = line[i];
+    if(inQuotes){
+      if(c === '"'){
+        if(line[i+1] === '"'){ cur += '"'; i++; }
+        else inQuotes = false;
+      } else cur += c;
+    } else {
+      if(c === '"') inQuotes = true;
+      else if(c === ','){ cells.push(cur); cur=''; }
+      else cur += c;
+    }
+  }
+  cells.push(cur);
+  return cells.map(s=>s.trim());
+}
+
 const BULK_IMPORT_DEFS = {
   hajis: {
     table: 'hajis',
@@ -1272,7 +1292,7 @@ const BULK_IMPORT_DEFS = {
     hint: 'One per line: <span class="mono">Full name, Passport no, Phone, Gender, Family code, Flight no, Group no, Q no, Room no</span><br/>Room no is matched against rooms already added for this group and auto-assigns the pilgrim — leave blank to skip.',
     placeholder: 'Ahmed Ismail, A1234567, 7771234, male, FAM01, EK625, G1, Q-00231, 1204',
     parse(line){
-      const [full_name, passport_no, phone, gender, family_code, flight_number, group_number, q_number, room_number] = line.split(',').map(s=>s?.trim());
+      const [full_name, passport_no, phone, gender, family_code, flight_number, group_number, q_number, room_number] = parseCsvLine(line);
       return full_name ? {
         group_id: state.activeGroupId, full_name, passport_no, phone,
         gender: (gender||'').toLowerCase()==='female'?'female':'male', family_code,
@@ -1287,7 +1307,7 @@ const BULK_IMPORT_DEFS = {
     hint: 'One per line: <span class="mono">Leg (mecca/madinah), Room number, Capacity, Type (family/male/female)</span>',
     placeholder: 'mecca, 1204, 4, family',
     parse(line){
-      const [leg, room_number, capacity, gender] = line.split(',').map(s=>s?.trim());
+      const [leg, room_number, capacity, gender] = parseCsvLine(line);
       if(!room_number) return null;
       return { group_id: state.activeGroupId, hotel_leg: (leg||'').toLowerCase()==='madinah'?'madinah':'mecca', room_number, capacity: parseInt(capacity||'4'), gender: ['male','female'].includes((gender||'').toLowerCase())?gender.toLowerCase():'family' };
     }
@@ -1298,7 +1318,7 @@ const BULK_IMPORT_DEFS = {
     hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Driver name, Capacity</span>',
     placeholder: 'airport_transfer, B-12, Ali Hassan, 45',
     parse(line){
-      const [leg, bus_number, driver_name, capacity] = line.split(',').map(s=>s?.trim());
+      const [leg, bus_number, driver_name, capacity] = parseCsvLine(line);
       if(!bus_number) return null;
       const legs = ['airport_transfer','mecca_madinah','ziyarat'];
       return { group_id: state.activeGroupId, leg: legs.includes((leg||'').toLowerCase())?leg.toLowerCase():'airport_transfer', bus_number, driver_name, capacity: parseInt(capacity||'45') };
@@ -1310,7 +1330,7 @@ const BULK_IMPORT_DEFS = {
     hint: 'One per line: <span class="mono">Hotel name, Leg (mecca/madinah)</span>',
     placeholder: 'Hilton Makkah, mecca',
     parse(line){
-      const [name, leg] = line.split(',').map(s=>s?.trim());
+      const [name, leg] = parseCsvLine(line);
       return name ? { name, leg: (leg||'').toLowerCase()==='madinah'?'madinah':'mecca' } : null;
     }
   },
@@ -1320,7 +1340,7 @@ const BULK_IMPORT_DEFS = {
     hint: 'One per line: <span class="mono">Trip name, Adult price, Child (5-9) price</span>',
     placeholder: 'Hira, 150, 75',
     parse(line){
-      const [name, price_adult, price_child] = line.split(',').map(s=>s?.trim());
+      const [name, price_adult, price_child] = parseCsvLine(line);
       return name ? { group_id: state.activeGroupId, name, price_adult: parseFloat(price_adult||'0'), price_child: parseFloat(price_child||'0') } : null;
     }
   },
@@ -1330,7 +1350,7 @@ const BULK_IMPORT_DEFS = {
     hint: 'One per line: <span class="mono">Package name, Price</span>',
     placeholder: 'Quad sharing, 8500',
     parse(line, groupId){
-      const [name, price] = line.split(',').map(s=>s?.trim());
+      const [name, price] = parseCsvLine(line);
       return name ? { group_id: groupId, name, price: parseFloat(price||'0') } : null;
     }
   }
@@ -1355,12 +1375,25 @@ function openBulkImportFromSettings(){
   openModal('bulkImport', {entity, groupId: state.activeGroupId});
 }
 
+function handleCsvFileUpload(input){
+  const file = input.files?.[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    document.getElementById('csv-text').value = String(reader.result||'').trim();
+    document.getElementById('csv-has-header').checked = true;
+  };
+  reader.onerror = () => showNotice('Could not read that file.', 'error');
+  reader.readAsText(file);
+}
+
 async function bulkImportCSV(entity, groupId){
   entity = entity || 'hajis';
   const def = BULK_IMPORT_DEFS[entity];
   const text = document.getElementById('csv-text').value.trim();
   if(!text || !def) return;
-  const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
+  let lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
+  if(document.getElementById('csv-has-header')?.checked) lines = lines.slice(1);
   const parsed = lines.map(line=>def.parse(line, groupId)).filter(Boolean);
   const rows = parsed.map(({_roomNumber, ...rest})=>rest);
   if(rows.length){
@@ -2253,7 +2286,15 @@ function renderModal(){
     body = `
       <h3>${def.title}</h3>
       <p style="font-size:12px;color:#6b6252;">${def.hint}</p>
-      <textarea id="csv-text" style="width:100%;height:160px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:8px;" placeholder="${esc(def.placeholder)}"></textarea>
+      <div class="field" style="margin-top:14px;">
+        <label>Upload CSV file</label>
+        <input type="file" id="csv-file" accept=".csv,text/csv" onchange="handleCsvFileUpload(this)"/>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:12px;margin:8px 0 14px;">
+        <input type="checkbox" id="csv-has-header" style="width:auto;"/> First row is column headers (skip it)
+      </label>
+      <p style="font-size:11px;color:#8a8168;margin-bottom:6px;">Or paste rows directly:</p>
+      <textarea id="csv-text" style="width:100%;height:140px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:8px;" placeholder="${esc(def.placeholder)}"></textarea>
       <div style="display:flex;gap:8px;margin-top:14px;">
         <button class="primary" style="flex:1" onclick="bulkImportCSV('${entity}'${data.groupId?`,'${data.groupId}'`:''})">Import</button>
         <button class="ghost" onclick="closeModal()">Cancel</button>
