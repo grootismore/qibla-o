@@ -1722,58 +1722,64 @@ async function bulkImportCSV(entity, groupId){
   if(rows.length){
     if(entity==='hajis'){
       // Resolve/create a Group per unique group name in the sheet (falls back to the batch group when blank).
+      // Batched: one insert for every missing group, instead of one round trip per row.
       const groupCache = new Map(state.groups.map(g=>[g.name.toLowerCase(), g]));
+      const missingGroupNames = new Map();
       for(const p of parsed){
-        if(!p._groupName){ p._resolvedGroupId = groupId; continue; }
-        let g = groupCache.get(p._groupName.toLowerCase());
-        if(!g){
-          const { data: newGroup, error: gErr } = await sb.from('groups').insert({name: p._groupName}).select().single();
-          if(gErr || !newGroup){ p._resolvedGroupId = groupId; continue; }
-          g = newGroup;
-          groupCache.set(p._groupName.toLowerCase(), g);
-          state.groups.push(g);
-        }
-        p._resolvedGroupId = g.id;
+        if(!p._groupName) continue;
+        const key = p._groupName.toLowerCase();
+        if(!groupCache.has(key) && !missingGroupNames.has(key)) missingGroupNames.set(key, p._groupName);
+      }
+      if(missingGroupNames.size){
+        const { data: newGroups, error: gErr } = await sb.from('groups').insert([...missingGroupNames.values()].map(name=>({name}))).select();
+        if(gErr){ showNotice(gErr.message, 'error'); return; }
+        for(const g of (newGroups||[])){ groupCache.set(g.name.toLowerCase(), g); state.groups.push(g); }
+      }
+      for(const p of parsed){
+        p._resolvedGroupId = p._groupName ? (groupCache.get(p._groupName.toLowerCase())?.id || groupId) : groupId;
       }
 
       // Resolve/create a Room per unique (group, room number) pair.
+      // Batched: one query covering every involved group, one insert for everything missing.
       const roomCache = new Map();
+      const involvedGroupIds = [...new Set(parsed.filter(p=>p._roomNumber && p._resolvedGroupId).map(p=>p._resolvedGroupId))];
+      if(involvedGroupIds.length){
+        const { data: existingRooms } = await sb.from('rooms').select('*').in('group_id', involvedGroupIds);
+        for(const r of (existingRooms||[])) roomCache.set(`${r.group_id}|${r.room_number.toLowerCase()}`, r);
+      }
+      const missingRooms = new Map();
       for(const p of parsed){
         if(!p._roomNumber || !p._resolvedGroupId) continue;
         const key = `${p._resolvedGroupId}|${p._roomNumber.toLowerCase()}`;
-        if(roomCache.has(key)) continue;
-        let room = p._resolvedGroupId===state.activeGroupId
-          ? state.rooms.find(r=>r.room_number.toLowerCase()===p._roomNumber.toLowerCase())
-          : null;
-        if(!room){
-          const { data: existing } = await sb.from('rooms').select('*').eq('group_id', p._resolvedGroupId).ilike('room_number', p._roomNumber).maybeSingle();
-          room = existing || null;
+        if(!roomCache.has(key) && !missingRooms.has(key)){
+          missingRooms.set(key, { group_id: p._resolvedGroupId, hotel_leg:'mecca', room_number: p._roomNumber, capacity:4, gender:'family' });
         }
-        if(!room){
-          const { data: newRoom, error: roomErr } = await sb.from('rooms').insert({ group_id: p._resolvedGroupId, hotel_leg:'mecca', room_number: p._roomNumber, capacity:4, gender:'family' }).select().single();
-          if(!roomErr && newRoom) room = newRoom;
-        }
-        if(room){ roomCache.set(key, room); if(p._resolvedGroupId===state.activeGroupId) state.rooms.push(room); }
+      }
+      if(missingRooms.size){
+        const { data: newRooms, error: roomErr } = await sb.from('rooms').insert([...missingRooms.values()]).select();
+        if(roomErr){ showNotice(roomErr.message, 'error'); return; }
+        for(const r of (newRooms||[])){ roomCache.set(`${r.group_id}|${r.room_number.toLowerCase()}`, r); if(r.group_id===state.activeGroupId) state.rooms.push(r); }
       }
 
-      // Resolve/create a Package per unique (group, package name) pair.
+      // Resolve/create a Package per unique (group, package name) pair. Same batched pattern.
       const packageCache = new Map();
+      const involvedPackageGroupIds = [...new Set(parsed.filter(p=>p._packageName && p._resolvedGroupId).map(p=>p._resolvedGroupId))];
+      if(involvedPackageGroupIds.length){
+        const { data: existingPackages } = await sb.from('packages').select('*').in('group_id', involvedPackageGroupIds);
+        for(const x of (existingPackages||[])) packageCache.set(`${x.group_id}|${x.name.toLowerCase()}`, x);
+      }
+      const missingPackages = new Map();
       for(const p of parsed){
         if(!p._packageName || !p._resolvedGroupId) continue;
         const key = `${p._resolvedGroupId}|${p._packageName.toLowerCase()}`;
-        if(packageCache.has(key)) continue;
-        let pkg = p._resolvedGroupId===state.activeGroupId
-          ? state.packages.find(x=>x.name.toLowerCase()===p._packageName.toLowerCase())
-          : null;
-        if(!pkg){
-          const { data: existing } = await sb.from('packages').select('*').eq('group_id', p._resolvedGroupId).ilike('name', p._packageName).maybeSingle();
-          pkg = existing || null;
+        if(!packageCache.has(key) && !missingPackages.has(key)){
+          missingPackages.set(key, { group_id: p._resolvedGroupId, name: p._packageName, price: 0 });
         }
-        if(!pkg){
-          const { data: newPkg, error: pkgErr } = await sb.from('packages').insert({ group_id: p._resolvedGroupId, name: p._packageName, price: 0 }).select().single();
-          if(!pkgErr && newPkg) pkg = newPkg;
-        }
-        if(pkg){ packageCache.set(key, pkg); if(p._resolvedGroupId===state.activeGroupId) state.packages.push(pkg); }
+      }
+      if(missingPackages.size){
+        const { data: newPackages, error: pkgErr } = await sb.from('packages').insert([...missingPackages.values()]).select();
+        if(pkgErr){ showNotice(pkgErr.message, 'error'); return; }
+        for(const x of (newPackages||[])){ packageCache.set(`${x.group_id}|${x.name.toLowerCase()}`, x); if(x.group_id===state.activeGroupId) state.packages.push(x); }
       }
 
       rows = parsed.map(p=>({
