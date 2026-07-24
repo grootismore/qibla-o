@@ -1503,6 +1503,12 @@ function renderBuses(){
             <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Driver: ${esc(b.driver_name||'—')}</div>
             <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,occ.length/b.capacity*100)}%"></div></div>
             <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('assignBus',{busId:'${b.id}'})" ${can('manageBuses')?'':'disabled'}>Assign pilgrims</button>
+            ${can('manageBuses') ? `
+              <div style="display:flex;gap:8px;margin-top:8px;">
+                <button class="ghost" style="flex:1;" onclick="openModal('bus', state.buses.find(x=>x.id==='${b.id}'))">Edit</button>
+                <button class="danger" style="flex:1;" onclick="deleteBus('${b.id}')">Remove</button>
+              </div>
+            ` : ''}
           </div>`;
         }).join('') || `<div class="empty" style="grid-column:1/-1;">No buses added for this leg yet.</div>`}
       </div>
@@ -1511,14 +1517,23 @@ function renderBuses(){
   `;
 }
 
-async function saveBus(e){
+async function saveBus(e, id){
   e.preventDefault();
   const f = e.target;
-  await sb.from('buses').insert({
-    group_id: state.activeGroupId, bus_number: f.bus_number.value, leg: f.leg.value,
+  const payload = {
+    bus_number: f.bus_number.value, leg: f.leg.value,
     driver_name: f.driver_name.value, capacity: parseInt(f.capacity.value||'45')
-  });
+  };
+  let error;
+  if(id) ({ error } = await sb.from('buses').update(payload).eq('id', id));
+  else ({ error } = await sb.from('buses').insert({ group_id: state.activeGroupId, ...payload }));
+  if(error){ showNotice(error.message, 'error'); return; }
   closeModal(); await loadGroupData(); render();
+}
+async function deleteBus(id){
+  const { error } = await sb.from('buses').delete().eq('id', id);
+  if(error){ showNotice(error.message, 'error'); return; }
+  await loadGroupData(); render();
 }
 
 async function toggleBusAssign(busId, hajiId, assign){
@@ -2335,15 +2350,15 @@ function renderModal(){
     `;
   } else if(type==='bus'){
     body = `
-      <h3>Add bus</h3>
-      <form onsubmit="saveBus(event)">
+      <h3>${data.id?'Edit bus':'Add bus'}</h3>
+      <form onsubmit="saveBus(event, ${data.id?`'${data.id}'`:'null'})">
         <div class="two-col">
-          <div class="field"><label>Leg</label>${customSelectHtml({ name:'leg', options:[{value:'airport_transfer',label:'Airport transfer'},{value:'mecca_madinah',label:'Mecca ↔ Madinah'},{value:'ziyarat',label:'Ziyarat'}], searchable:false })}</div>
-          <div class="field"><label>Bus number</label><input name="bus_number" required/></div>
+          <div class="field"><label>Leg</label>${customSelectHtml({ name:'leg', options:[{value:'airport_transfer',label:'Airport transfer'},{value:'mecca_madinah',label:'Mecca ↔ Madinah'},{value:'ziyarat',label:'Ziyarat'}], value:data.leg, searchable:false })}</div>
+          <div class="field"><label>Bus number</label><input name="bus_number" value="${esc(data.bus_number||'')}" required/></div>
         </div>
         <div class="two-col">
-          <div class="field"><label>Driver name</label><input name="driver_name"/></div>
-          <div class="field"><label>Capacity</label><input type="number" name="capacity" value="45"/></div>
+          <div class="field"><label>Driver name</label><input name="driver_name" value="${esc(data.driver_name||'')}"/></div>
+          <div class="field"><label>Capacity</label><input type="number" name="capacity" value="${data.capacity??45}"/></div>
         </div>
         <div style="display:flex;gap:8px;margin-top:16px;">
           <button type="submit" class="primary" style="flex:1">Save</button>
