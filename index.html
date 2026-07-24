@@ -474,7 +474,7 @@ async function loadMyHajiData(){
     h.package_id ? sb.from('packages').select('*').eq('id', h.package_id).maybeSingle() : Promise.resolve({data:null}),
     sb.from('payments').select('*').eq('haji_id', h.id).order('paid_on', {ascending:false}),
     sb.from('room_assignments').select('*, rooms(*)').eq('haji_id', h.id),
-    sb.from('bus_assignments').select('*, buses(*)').eq('haji_id', h.id),
+    sb.from('bus_assignments').select('*, buses(*, trip_types(name))').eq('haji_id', h.id),
   ]);
   state.roleSettings = roleSettings || [];
   state.myGroup = group || null;
@@ -571,13 +571,20 @@ function hajiBus(hajiId){
   const ba = state.busAssignments.find(a=>a.haji_id===hajiId);
   return ba ? state.buses.find(b=>b.id===ba.bus_id) : null;
 }
+function busTripLabel(bus){
+  if(!bus || bus.leg!=='ziyarat') return null;
+  return state.tripTypes.find(t=>t.id===bus.trip_type_id)?.name || null;
+}
 function hajiSummaryLine(h){
   const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
   const bus = hajiBus(h.id);
   const parts = [];
   if(h.group_number) parts.push(esc(h.group_number));
   if(room) parts.push(`Room ${esc(room.room_number)}`);
-  if(bus) parts.push(`Bus ${esc(bus.bus_number)}`);
+  if(bus){
+    const tripLabel = busTripLabel(bus);
+    parts.push(`Bus ${esc(bus.bus_number)}${tripLabel?` (${esc(tripLabel)})`:''}`);
+  }
   return parts.join(' • ') || 'No group, room, or bus assigned yet';
 }
 function groupSummaryLine(g){
@@ -1038,7 +1045,7 @@ function renderHajiDashboard(){
         ${sections.includes('bus') ? `
           <div class="card" style="margin-bottom:14px;">
             <h3 style="margin-bottom:6px;">Bus assignment</h3>
-            ${state.myBusAssignments.length ? state.myBusAssignments.map(a=>`<p>Bus ${esc(a.buses?.bus_number||'—')} · ${(a.buses?.leg||'').replace('_',' ')}</p>`).join('') : `<p style="color:#8a8168;">Not assigned yet.</p>`}
+            ${state.myBusAssignments.length ? state.myBusAssignments.map(a=>`<p>Bus ${esc(a.buses?.bus_number||'—')} · ${(a.buses?.leg||'').replace('_',' ')}${a.buses?.trip_types?.name?` · ${esc(a.buses.trip_types.name)}`:''}</p>`).join('') : `<p style="color:#8a8168;">Not assigned yet.</p>`}
           </div>
         ` : ''}
       </div>
@@ -1315,13 +1322,15 @@ const BULK_IMPORT_DEFS = {
   buses: {
     table: 'buses',
     title: 'Bulk import buses',
-    hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Driver name, Capacity</span>',
-    placeholder: 'airport_transfer, B-12, Ali Hassan, 45',
+    hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Driver name, Capacity, Trip name (ziyarat only)</span><br/>Trip name is matched against trip types already added for this group.',
+    placeholder: 'ziyarat, B-12, Ali Hassan, 45, Hira',
     parse(line){
-      const [leg, bus_number, driver_name, capacity] = parseCsvLine(line);
+      const [leg, bus_number, driver_name, capacity, tripName] = parseCsvLine(line);
       if(!bus_number) return null;
       const legs = ['airport_transfer','mecca_madinah','ziyarat'];
-      return { group_id: state.activeGroupId, leg: legs.includes((leg||'').toLowerCase())?leg.toLowerCase():'airport_transfer', bus_number, driver_name, capacity: parseInt(capacity||'45') };
+      const normalizedLeg = legs.includes((leg||'').toLowerCase())?leg.toLowerCase():'airport_transfer';
+      const trip = normalizedLeg==='ziyarat' && tripName ? state.tripTypes.find(t=>t.name.toLowerCase()===tripName.toLowerCase()) : null;
+      return { group_id: state.activeGroupId, leg: normalizedLeg, bus_number, driver_name, capacity: parseInt(capacity||'45'), trip_type_id: trip?trip.id:null };
     }
   },
   hotels: {
@@ -1480,49 +1489,67 @@ async function toggleRoomAssign(roomId, hajiId, assign){
 }
 
 // ---------- BUSES ----------
+function busCardsHtml(buses, leg){
+  return buses.map(b=>{
+    const occ = busOccupants(b.id);
+    const over = occ.length > b.capacity;
+    const trip = leg==='ziyarat' ? state.tripTypes.find(t=>t.id===b.trip_type_id) : null;
+    return `<div class="card">
+      <div style="display:flex;justify-content:space-between;">
+        <strong>Bus ${esc(b.bus_number)}</strong>
+        <span class="pill ${over?'bad':'ok'}">${occ.length}/${b.capacity}</span>
+      </div>
+      ${trip ? `<div style="margin:4px 0;"><span class="pill warn">${esc(trip.name)}</span></div>` : ''}
+      <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Driver: ${esc(b.driver_name||'—')}</div>
+      <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,occ.length/b.capacity*100)}%"></div></div>
+      <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('assignBus',{busId:'${b.id}'})" ${can('manageBuses')?'':'disabled'}>Assign pilgrims</button>
+      ${can('manageBuses') ? `
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="ghost" style="flex:1;" onclick="openModal('bus', state.buses.find(x=>x.id==='${b.id}'))">Edit</button>
+          <button class="danger" style="flex:1;" onclick="deleteBus('${b.id}')">Remove</button>
+        </div>
+      ` : ''}
+    </div>`;
+  }).join('') || `<div class="empty" style="grid-column:1/-1;">No buses added for this leg yet.</div>`;
+}
 function renderBuses(){
   if(!state.activeGroupId) return `<div class="empty"><h3>Select a group first</h3></div>`;
-  const legs = [['airport_transfer','Airport transfer'],['mecca_madinah','Mecca ↔ Madinah'],['ziyarat','Ziyarat']];
+  const nonZiyaratLegs = [['airport_transfer','Airport transfer'],['mecca_madinah','Mecca ↔ Madinah']];
+  const ziyaratBuses = state.buses.filter(b=>b.leg==='ziyarat');
+  const ziyaratGroups = state.tripTypes
+    .map(t=>({ label: t.name, buses: ziyaratBuses.filter(b=>b.trip_type_id===t.id) }))
+    .filter(g=>g.buses.length);
+  const unassignedZiyarat = ziyaratBuses.filter(b=>!state.tripTypes.some(t=>t.id===b.trip_type_id));
+  if(unassignedZiyarat.length) ziyaratGroups.push({ label: 'Unspecified trip', buses: unassignedZiyarat });
+
   return `
     <div class="toolbar">
       ${can('manageBuses') ? `<button class="primary" onclick="openModal('bus')">+ Add bus</button>` : ''}
     </div>
-    ${legs.map(([leg,label])=>{
-      const buses = state.buses.filter(b=>b.leg===leg);
-      return `
+    ${nonZiyaratLegs.map(([leg,label])=>`
       <h3 style="margin:18px 0 10px;">${label}</h3>
-      <div class="grid grid-4">
-        ${buses.map(b=>{
-          const occ = busOccupants(b.id);
-          const over = occ.length > b.capacity;
-          return `<div class="card">
-            <div style="display:flex;justify-content:space-between;">
-              <strong>Bus ${esc(b.bus_number)}</strong>
-              <span class="pill ${over?'bad':'ok'}">${occ.length}/${b.capacity}</span>
-            </div>
-            <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Driver: ${esc(b.driver_name||'—')}</div>
-            <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,occ.length/b.capacity*100)}%"></div></div>
-            <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('assignBus',{busId:'${b.id}'})" ${can('manageBuses')?'':'disabled'}>Assign pilgrims</button>
-            ${can('manageBuses') ? `
-              <div style="display:flex;gap:8px;margin-top:8px;">
-                <button class="ghost" style="flex:1;" onclick="openModal('bus', state.buses.find(x=>x.id==='${b.id}'))">Edit</button>
-                <button class="danger" style="flex:1;" onclick="deleteBus('${b.id}')">Remove</button>
-              </div>
-            ` : ''}
-          </div>`;
-        }).join('') || `<div class="empty" style="grid-column:1/-1;">No buses added for this leg yet.</div>`}
-      </div>
-      `;
-    }).join('')}
+      <div class="grid grid-4">${busCardsHtml(state.buses.filter(b=>b.leg===leg), leg)}</div>
+    `).join('')}
+    <h3 style="margin:18px 0 10px;">Ziyarat</h3>
+    ${ziyaratGroups.length ? ziyaratGroups.map(g=>`
+      <h4 style="margin:14px 0 8px;color:#6b6252;font-size:13px;text-transform:uppercase;letter-spacing:.04em;">${esc(g.label)}</h4>
+      <div class="grid grid-4">${busCardsHtml(g.buses, 'ziyarat')}</div>
+    `).join('') : `<div class="empty">No ziyarat buses added yet.</div>`}
   `;
 }
 
+function toggleBusTripField(sel){
+  const tripField = sel.closest('form')?.querySelector('.bus-trip-field');
+  if(!tripField) return;
+  tripField.style.display = sel.value==='ziyarat' ? 'block' : 'none';
+}
 async function saveBus(e, id){
   e.preventDefault();
   const f = e.target;
   const payload = {
     bus_number: f.bus_number.value, leg: f.leg.value,
-    driver_name: f.driver_name.value, capacity: parseInt(f.capacity.value||'45')
+    driver_name: f.driver_name.value, capacity: parseInt(f.capacity.value||'45'),
+    trip_type_id: f.leg.value==='ziyarat' ? (f.trip_type_id.value||null) : null
   };
   let error;
   if(id) ({ error } = await sb.from('buses').update(payload).eq('id', id));
@@ -2248,7 +2275,7 @@ function renderModal(){
         ${detailRow('Q number', esc(h.q_number||'—'))}
         ${detailRow('Group number', esc(h.group_number||'—'))}
         ${detailRow('Room', room?`${esc(room.room_number)} (${titleCase(room.hotel_leg)})`:'—')}
-        ${detailRow('Bus', bus?`${esc(bus.bus_number)} (${titleCase(bus.leg.replace(/_/g,' '))})`:'—')}
+        ${detailRow('Bus', bus?`${esc(bus.bus_number)} (${titleCase(bus.leg.replace(/_/g,' '))}${busTripLabel(bus)?` · ${esc(busTripLabel(bus))}`:''})`:'—')}
         ${detailRow('Notes', esc(h.notes||'—'))}
       </div>
       <div style="display:flex;gap:8px;margin-top:16px;">
@@ -2353,8 +2380,17 @@ function renderModal(){
       <h3>${data.id?'Edit bus':'Add bus'}</h3>
       <form onsubmit="saveBus(event, ${data.id?`'${data.id}'`:'null'})">
         <div class="two-col">
-          <div class="field"><label>Leg</label>${customSelectHtml({ name:'leg', options:[{value:'airport_transfer',label:'Airport transfer'},{value:'mecca_madinah',label:'Mecca ↔ Madinah'},{value:'ziyarat',label:'Ziyarat'}], value:data.leg, searchable:false })}</div>
+          <div class="field"><label>Leg</label>${customSelectHtml({ name:'leg', options:[{value:'airport_transfer',label:'Airport transfer'},{value:'mecca_madinah',label:'Mecca ↔ Madinah'},{value:'ziyarat',label:'Ziyarat'}], value:data.leg, searchable:false, onChange:'toggleBusTripField(this)' })}</div>
           <div class="field"><label>Bus number</label><input name="bus_number" value="${esc(data.bus_number||'')}" required/></div>
+        </div>
+        <div class="field bus-trip-field" style="display:${data.leg==='ziyarat'?'block':'none'};">
+          <label>Trip name</label>
+          ${customSelectHtml({
+            name: 'trip_type_id',
+            options: [{value:'',label:'— None —'}, ...state.tripTypes.map(t=>({value:t.id, label:t.name}))],
+            value: data.trip_type_id||''
+          })}
+          ${!state.tripTypes.length ? `<p style="font-size:11px;color:#8a8168;margin-top:4px;">No trip types yet — add some via Manage trip types first.</p>` : ''}
         </div>
         <div class="two-col">
           <div class="field"><label>Driver name</label><input name="driver_name" value="${esc(data.driver_name||'')}"/></div>
@@ -2369,8 +2405,9 @@ function renderModal(){
   } else if(type==='assignBus'){
     const bus = state.buses.find(b=>b.id===data.busId);
     const occIds = new Set(busOccupants(bus.id).map(h=>h.id));
+    const tripLabel = busTripLabel(bus);
     body = `
-      <h3>Assign to Bus ${esc(bus.bus_number)}</h3>
+      <h3>Assign to Bus ${esc(bus.bus_number)}${tripLabel?` — ${esc(tripLabel)}`:''}</h3>
       <div class="assign-list">
         ${state.hajis.map(h=>`
           <div class="assign-row">
