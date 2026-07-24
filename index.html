@@ -1552,11 +1552,6 @@ const BULK_IMPORT_ENTITY_LABELS = {
 };
 const BULK_IMPORT_GROUP_SCOPED = new Set(['hajis','rooms','buses','tripTypes','packages']);
 
-function openBulkImportFromSettings(){
-  const entity = document.getElementById('bulk-import-entity').value;
-  openModal('bulkImport', {entity, groupId: state.activeGroupId});
-}
-
 function handleCsvFileUpload(input){
   const file = input.files?.[0];
   if(!file) return;
@@ -1567,6 +1562,10 @@ function handleCsvFileUpload(input){
   };
   reader.onerror = () => showNotice('Could not read that file.', 'error');
   reader.readAsText(file);
+}
+
+function switchBulkImportEntity(sel){
+  openModal('bulkImport', {entity: sel.value, groupId: state.activeGroupId});
 }
 
 function stripTempKeys(row){
@@ -2329,20 +2328,10 @@ function renderSettings(){
     <div class="card" style="margin-bottom:16px;max-width:520px;">
       <h3 style="margin-bottom:6px;">Bulk data import</h3>
       <p style="font-size:12px;color:#6b6252;margin-bottom:10px;">
-        Paste CSV data to add many records at once.
-        ${state.activeGroupId
-          ? `Group-scoped imports (hajis, rooms, buses, trip types, packages) apply to the active group — <strong>${esc(state.groups.find(g=>g.id===state.activeGroupId)?.name||'')}</strong>.`
-          : `No active group selected — for hajis, rooms, buses, trip types, or packages, a group is created for you automatically (or name one yourself), unless you pick an existing group under Groups first.`}
+        Add many hajis, rooms, buses, hotels, trip types, or packages at once from a CSV file.
+        ${state.activeGroupId ? `Applies to <strong>${esc(state.groups.find(g=>g.id===state.activeGroupId)?.name||'')}</strong> unless you choose otherwise inside.` : ''}
       </p>
-      <div class="field">
-        <label>What to import</label>
-        ${customSelectHtml({
-          id: 'bulk-import-entity',
-          options: Object.entries(BULK_IMPORT_ENTITY_LABELS).map(([k,label])=>({value:k, label})),
-          searchable: false
-        })}
-      </div>
-      <button class="gold" style="width:100%;" onclick="openBulkImportFromSettings()">Open bulk import</button>
+      <button class="gold" style="width:100%;" onclick="openModal('bulkImport', {entity:'hajis', groupId: state.activeGroupId})">Import from CSV…</button>
     </div>
     <div class="card" style="margin-bottom:16px;max-width:520px;border-color:var(--danger);">
       <h3 style="margin-bottom:6px;color:var(--danger);">Danger zone</h3>
@@ -2658,24 +2647,36 @@ function renderModal(){
     const def = BULK_IMPORT_DEFS[entity];
     const needsGroup = BULK_IMPORT_GROUP_SCOPED.has(entity) && !data.groupId;
     body = `
-      <h3>${def.title}</h3>
-      <p style="font-size:12px;color:#6b6252;">${def.hint}</p>
+      <h3>Bulk import</h3>
+      <div class="field">
+        <label>What to import</label>
+        ${customSelectHtml({
+          id: 'bulk-import-entity-modal',
+          options: Object.entries(BULK_IMPORT_ENTITY_LABELS).map(([k,label])=>({value:k, label})),
+          value: entity,
+          searchable: false,
+          onChange: 'switchBulkImportEntity(this)'
+        })}
+      </div>
+      <p style="font-size:12px;color:#6b6252;margin-top:8px;">${def.hint}</p>
       ${needsGroup ? `
         <div class="field" style="margin-top:14px;">
           <label>New group name (optional)</label>
-          <p style="font-size:11px;color:#8a8168;margin-bottom:4px;">No group is currently active. Name a group to create or reuse — leave blank and one is created for you automatically.</p>
+          <p style="font-size:11px;color:#8a8168;margin-bottom:4px;">Leave blank and a group is created for you automatically.</p>
           <input id="bulk-import-group-name" placeholder="e.g. Batch 3 - September"/>
         </div>
       ` : ''}
       <div class="field" style="margin-top:14px;">
-        <label>Upload CSV file</label>
+        <label>CSV file</label>
         <input type="file" id="csv-file" accept=".csv,text/csv" onchange="handleCsvFileUpload(this)"/>
       </div>
-      <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:12px;margin:8px 0 14px;">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:12px;margin:8px 0 4px;">
         <input type="checkbox" id="csv-has-header" style="width:auto;"/> First row is column headers (skip it)
       </label>
-      <p style="font-size:11px;color:#8a8168;margin-bottom:6px;">Or paste rows directly:</p>
-      <textarea id="csv-text" style="width:100%;height:140px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:8px;" placeholder="${esc(def.placeholder)}"></textarea>
+      <details style="margin-top:6px;">
+        <summary style="font-size:11px;color:#8a8168;cursor:pointer;">Paste CSV text instead</summary>
+        <textarea id="csv-text" style="width:100%;height:120px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:8px;margin-top:8px;" placeholder="${esc(def.placeholder)}"></textarea>
+      </details>
       <div style="display:flex;gap:8px;margin-top:14px;">
         <button class="primary" style="flex:1" onclick="bulkImportCSV('${entity}'${data.groupId?`,'${data.groupId}'`:''})">Import</button>
         <button class="ghost" onclick="closeModal()">Cancel</button>
