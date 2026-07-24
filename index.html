@@ -293,6 +293,27 @@ function setPending(delta){
   if(pendingRequests === 0) reenablePendingButtons();
 }
 
+function updateImportProgress(step, total, label){
+  const wrap = document.getElementById('import-progress-wrap');
+  if(!wrap) return;
+  wrap.style.display = 'block';
+  const pct = total ? Math.round((step/total)*100) : 0;
+  const fill = document.getElementById('import-progress-fill');
+  const pctLabel = document.getElementById('import-progress-pct');
+  const textLabel = document.getElementById('import-progress-label');
+  if(fill) fill.style.width = pct + '%';
+  if(pctLabel) pctLabel.textContent = pct + '%';
+  if(textLabel) textLabel.textContent = label;
+}
+function resetImportProgress(){
+  const wrap = document.getElementById('import-progress-wrap');
+  if(wrap) wrap.style.display = 'none';
+  const importBtn = document.getElementById('bulk-import-btn');
+  if(importBtn){ importBtn.disabled = false; importBtn.textContent = 'Import'; }
+  const cancelBtn = document.getElementById('bulk-import-cancel-btn');
+  if(cancelBtn) cancelBtn.disabled = false;
+}
+
 async function trackedFetch(input, init){
   setPending(1);
   const method = (init?.method || 'GET').toUpperCase();
@@ -1692,6 +1713,13 @@ async function bulkImportCSV(entity, groupId){
   const text = document.getElementById('csv-text').value.trim();
   if(!text || !def) return;
 
+  const totalSteps = entity==='hajis' ? 5 : entity==='buses' ? 2 : 1;
+  const importBtn = document.getElementById('bulk-import-btn');
+  const cancelBtn = document.getElementById('bulk-import-cancel-btn');
+  if(importBtn){ importBtn.disabled = true; importBtn.textContent = 'Importing…'; }
+  if(cancelBtn) cancelBtn.disabled = true;
+  updateImportProgress(0, totalSteps, 'Reading file…');
+
   let rawLines = text.split('\n').map(l=>l.trim()).filter(Boolean);
   if(document.getElementById('csv-has-header')?.checked) rawLines = rawLines.slice(1);
   // A haji sheet where every row names its own Group doesn't need a fallback group created.
@@ -1708,7 +1736,7 @@ async function bulkImportCSV(entity, groupId){
       groupId = existingGroup.id;
     } else {
       const { data: newGroup, error: groupErr } = await sb.from('groups').insert({name:newGroupName}).select().single();
-      if(groupErr){ showNotice(groupErr.message, 'error'); return; }
+      if(groupErr){ resetImportProgress(); showNotice(groupErr.message, 'error'); return; }
       groupId = newGroup.id;
       state.groups.push(newGroup);
     }
@@ -1721,6 +1749,7 @@ async function bulkImportCSV(entity, groupId){
 
   if(rows.length){
     if(entity==='hajis'){
+      updateImportProgress(0, totalSteps, 'Resolving groups…');
       // Resolve/create a Group per unique group name in the sheet (falls back to the batch group when blank).
       // Batched: one insert for every missing group, instead of one round trip per row.
       const groupCache = new Map(state.groups.map(g=>[g.name.toLowerCase(), g]));
@@ -1732,13 +1761,14 @@ async function bulkImportCSV(entity, groupId){
       }
       if(missingGroupNames.size){
         const { data: newGroups, error: gErr } = await sb.from('groups').insert([...missingGroupNames.values()].map(name=>({name}))).select();
-        if(gErr){ showNotice(gErr.message, 'error'); return; }
+        if(gErr){ resetImportProgress(); showNotice(gErr.message, 'error'); return; }
         for(const g of (newGroups||[])){ groupCache.set(g.name.toLowerCase(), g); state.groups.push(g); }
       }
       for(const p of parsed){
         p._resolvedGroupId = p._groupName ? (groupCache.get(p._groupName.toLowerCase())?.id || groupId) : groupId;
       }
 
+      updateImportProgress(1, totalSteps, 'Resolving rooms…');
       // Resolve/create a Room per unique (group, room number) pair.
       // Batched: one query covering every involved group, one insert for everything missing.
       const roomCache = new Map();
@@ -1757,10 +1787,11 @@ async function bulkImportCSV(entity, groupId){
       }
       if(missingRooms.size){
         const { data: newRooms, error: roomErr } = await sb.from('rooms').insert([...missingRooms.values()]).select();
-        if(roomErr){ showNotice(roomErr.message, 'error'); return; }
+        if(roomErr){ resetImportProgress(); showNotice(roomErr.message, 'error'); return; }
         for(const r of (newRooms||[])){ roomCache.set(`${r.group_id}|${r.room_number.toLowerCase()}`, r); if(r.group_id===state.activeGroupId) state.rooms.push(r); }
       }
 
+      updateImportProgress(2, totalSteps, 'Resolving packages…');
       // Resolve/create a Package per unique (group, package name) pair. Same batched pattern.
       const packageCache = new Map();
       const involvedPackageGroupIds = [...new Set(parsed.filter(p=>p._packageName && p._resolvedGroupId).map(p=>p._resolvedGroupId))];
@@ -1778,18 +1809,20 @@ async function bulkImportCSV(entity, groupId){
       }
       if(missingPackages.size){
         const { data: newPackages, error: pkgErr } = await sb.from('packages').insert([...missingPackages.values()]).select();
-        if(pkgErr){ showNotice(pkgErr.message, 'error'); return; }
+        if(pkgErr){ resetImportProgress(); showNotice(pkgErr.message, 'error'); return; }
         for(const x of (newPackages||[])){ packageCache.set(`${x.group_id}|${x.name.toLowerCase()}`, x); if(x.group_id===state.activeGroupId) state.packages.push(x); }
       }
 
+      updateImportProgress(3, totalSteps, 'Saving pilgrims…');
       rows = parsed.map(p=>({
         ...stripTempKeys(p),
         group_id: p._resolvedGroupId,
         package_id: p._packageName && p._resolvedGroupId ? (packageCache.get(`${p._resolvedGroupId}|${p._packageName.toLowerCase()}`)?.id||null) : null
       }));
       const { data, error } = await sb.from(def.table).insert(rows).select();
-      if(error){ showNotice(error.message, 'error'); return; }
+      if(error){ resetImportProgress(); showNotice(error.message, 'error'); return; }
 
+      updateImportProgress(4, totalSteps, 'Assigning rooms…');
       const assignments = [];
       for(let i=0; i<(data||[]).length; i++){
         const p = parsed[i];
@@ -1798,7 +1831,9 @@ async function bulkImportCSV(entity, groupId){
         if(room) assignments.push({ room_id: room.id, haji_id: data[i].id });
       }
       if(assignments.length) await sb.from('room_assignments').insert(assignments);
+      updateImportProgress(5, totalSteps, 'Done');
     } else if(entity==='buses'){
+      updateImportProgress(0, totalSteps, 'Resolving trip types…');
       const tripCache = new Map(state.tripTypes.map(t=>[t.name.toLowerCase(), t]));
       for(const p of parsed){
         if(!p._tripName || tripCache.has(p._tripName.toLowerCase())) continue;
@@ -1807,12 +1842,16 @@ async function bulkImportCSV(entity, groupId){
         tripCache.set(p._tripName.toLowerCase(), newTrip);
         state.tripTypes.push(newTrip);
       }
+      updateImportProgress(1, totalSteps, 'Saving buses…');
       rows = parsed.map(p=>({ ...stripTempKeys(p), trip_type_id: p._tripName ? (tripCache.get(p._tripName.toLowerCase())?.id||null) : null }));
       const { error } = await sb.from(def.table).insert(rows);
-      if(error){ showNotice(error.message, 'error'); return; }
+      if(error){ resetImportProgress(); showNotice(error.message, 'error'); return; }
+      updateImportProgress(2, totalSteps, 'Done');
     } else {
+      updateImportProgress(0, totalSteps, 'Saving records…');
       const { error } = await sb.from(def.table).insert(rows);
-      if(error){ showNotice(error.message, 'error'); return; }
+      if(error){ resetImportProgress(); showNotice(error.message, 'error'); return; }
+      updateImportProgress(1, totalSteps, 'Done');
     }
   }
   if(entity==='hotels'){
@@ -2847,9 +2886,18 @@ function renderModal(){
         <summary style="font-size:11px;color:#8a8168;cursor:pointer;">Paste CSV text instead</summary>
         <textarea id="csv-text" style="width:100%;height:120px;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:8px;margin-top:8px;" placeholder="${esc(def.placeholder)}"></textarea>
       </details>
+      <div id="import-progress-wrap" style="display:none;margin-top:14px;">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#8a8168;margin-bottom:4px;">
+          <span id="import-progress-label">Starting…</span>
+          <span id="import-progress-pct">0%</span>
+        </div>
+        <div style="background:var(--sand-deep);border-radius:6px;height:8px;overflow:hidden;">
+          <div id="import-progress-fill" style="background:var(--gold);height:100%;width:0%;transition:width .25s ease;"></div>
+        </div>
+      </div>
       <div style="display:flex;gap:8px;margin-top:14px;">
-        <button class="primary" style="flex:1" onclick="bulkImportCSV('${entity}'${data.groupId?`,'${data.groupId}'`:''})">Import</button>
-        <button class="ghost" onclick="closeModal()">Cancel</button>
+        <button id="bulk-import-btn" class="primary" style="flex:1" onclick="bulkImportCSV('${entity}'${data.groupId?`,'${data.groupId}'`:''})">Import</button>
+        <button id="bulk-import-cancel-btn" class="ghost" onclick="closeModal()">Cancel</button>
       </div>
       <p style="font-size:11px;color:#8a8168;margin-top:12px;">
         Importing something else?
