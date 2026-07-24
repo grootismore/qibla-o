@@ -1580,8 +1580,8 @@ async function bulkImportCSV(entity, groupId){
   if(!text || !def) return;
 
   if(BULK_IMPORT_GROUP_SCOPED.has(entity) && !groupId){
-    const newGroupName = document.getElementById('bulk-import-group-name')?.value.trim();
-    if(!newGroupName){ showNotice('Enter a group name to create, or pick an active group under Groups first.', 'error'); return; }
+    const typedName = document.getElementById('bulk-import-group-name')?.value.trim();
+    const newGroupName = typedName || `Imported Group — ${new Date().toLocaleString()}`;
     const existingGroup = state.groups.find(g=>g.name.toLowerCase()===newGroupName.toLowerCase());
     if(existingGroup){
       groupId = existingGroup.id;
@@ -2332,7 +2332,7 @@ function renderSettings(){
         Paste CSV data to add many records at once.
         ${state.activeGroupId
           ? `Group-scoped imports (hajis, rooms, buses, trip types, packages) apply to the active group — <strong>${esc(state.groups.find(g=>g.id===state.activeGroupId)?.name||'')}</strong>.`
-          : `No active group selected — for hajis, rooms, buses, trip types, or packages you'll be asked to name a new group, or you can pick an existing one under Groups first.`}
+          : `No active group selected — for hajis, rooms, buses, trip types, or packages, a group is created for you automatically (or name one yourself), unless you pick an existing group under Groups first.`}
       </p>
       <div class="field">
         <label>What to import</label>
@@ -2662,8 +2662,8 @@ function renderModal(){
       <p style="font-size:12px;color:#6b6252;">${def.hint}</p>
       ${needsGroup ? `
         <div class="field" style="margin-top:14px;">
-          <label>New group name</label>
-          <p style="font-size:11px;color:#8a8168;margin-bottom:4px;">No group is currently active. Enter a name to create one for this import, or cancel and pick an existing group under Groups first.</p>
+          <label>New group name (optional)</label>
+          <p style="font-size:11px;color:#8a8168;margin-bottom:4px;">No group is currently active. Name a group to create or reuse — leave blank and one is created for you automatically.</p>
           <input id="bulk-import-group-name" placeholder="e.g. Batch 3 - September"/>
         </div>
       ` : ''}
