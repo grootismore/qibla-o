@@ -396,6 +396,7 @@ let state = {
   groupHajiCounts: new Map(), // group_id -> haji count, across ALL groups (company-wide overview)
   groupRoomCounts: new Map(), // group_id -> room count, across ALL groups
   groupBusCounts: new Map(), // group_id -> bus count, across ALL groups
+  hajisSearchQuery: '',
 };
 
 // ---------- VIEW-STATE PERSISTENCE (so a refresh doesn't dump you back on Dashboard) ----------
@@ -1207,7 +1208,7 @@ function render(){
   const enteringStaffView = state.view==='staff' && lastRenderedView!=='staff';
   if(state.view==='dashboard') content.innerHTML = renderDashboard();
   else if(state.view==='groups') content.innerHTML = renderGroups();
-  else if(state.view==='hajis') content.innerHTML = renderHajis();
+  else if(state.view==='hajis') { content.innerHTML = renderHajis(); if(state.hajisSearchQuery) filterHajisList(state.hajisSearchQuery); }
   else if(state.view==='rooms') content.innerHTML = renderRooms();
   else if(state.view==='buses') content.innerHTML = renderBuses();
   else if(state.view==='payments') content.innerHTML = renderPayments();
@@ -1583,18 +1584,37 @@ function renderHajis(){
     <div class="toolbar">
       ${can('manageHajis') ? `<button class="primary" onclick="openModal('haji')">+ Add haji</button>` : ''}
     </div>
-    <div class="summary-list">
-      ${state.hajis.map(h=>`
-        <div class="summary-row" onclick="openModal('hajiDetail', hajiById('${h.id}'))">
+    <div class="field" style="margin-bottom:12px;">
+      <input id="hajis-search" placeholder="Search by name, room, or Q number…" value="${esc(state.hajisSearchQuery||'')}" oninput="filterHajisList(this.value)"/>
+    </div>
+    <div class="summary-list" id="hajis-list">
+      ${state.hajis.map(h=>{
+        const room = maps.rooms.get(`${h.id}|mecca`) || maps.rooms.get(`${h.id}|madinah`);
+        const searchText = [h.full_name, room?.room_number, h.q_number].filter(Boolean).join(' ').toLowerCase();
+        return `
+        <div class="summary-row" data-search="${esc(searchText)}" onclick="openModal('hajiDetail', hajiById('${h.id}'))">
           <div>
             <div class="summary-name">${esc(h.full_name)} ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</div>
             <div class="summary-sub">${hajiSummaryLine(h, maps)}</div>
           </div>
           <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
         </div>
-      `).join('') || `<div class="empty">No hajis in this group yet.</div>`}
+      `;}).join('') || `<div class="empty">No hajis in this group yet.</div>`}
     </div>
+    <div id="hajis-no-results" class="empty" style="display:none;">No matches found.</div>
   `;
+}
+function filterHajisList(query){
+  state.hajisSearchQuery = query;
+  const q = query.trim().toLowerCase();
+  let visibleCount = 0;
+  document.querySelectorAll('#hajis-list .summary-row').forEach(row=>{
+    const match = !q || (row.dataset.search||'').includes(q);
+    row.style.display = match ? '' : 'none';
+    if(match) visibleCount++;
+  });
+  const noResults = document.getElementById('hajis-no-results');
+  if(noResults) noResults.style.display = (q && visibleCount===0) ? '' : 'none';
 }
 
 async function saveHaji(e, id){
