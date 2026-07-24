@@ -2356,6 +2356,9 @@ function renderSettings(){
         })}
       </div>
       <button class="danger" style="width:100%;" ${state.groups.length?'':'disabled'} onclick="openDeleteGroupConfirm()">Delete group…</button>
+      <div style="border-top:1px solid var(--line);margin:16px 0;"></div>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:10px;">Or wipe <strong>every</strong> group and hotel across the whole database. Staff accounts and settings are kept. This cannot be undone and affects every user.</p>
+      <button class="danger" style="width:100%;" onclick="openModal('deleteAllConfirmStep1')">Wipe entire database…</button>
     </div>
   `;
 }
@@ -2386,6 +2389,33 @@ async function deleteGroupPermanently(groupId){
   if(state.activeGroupId === groupId) state.activeGroupId = null;
   await loadAll();
   showNotice(`"${group.name}" and all its data have been permanently deleted.`, 'success');
+}
+const DELETE_ALL_CONFIRM_PHRASE = 'DELETE EVERYTHING';
+function toggleDeleteAllButton(){
+  const input = document.getElementById('delete-all-confirm-input');
+  const btn = document.getElementById('delete-all-confirm-btn');
+  if(!input || !btn) return;
+  btn.disabled = input.value.trim() !== DELETE_ALL_CONFIRM_PHRASE;
+}
+async function deleteEntireDatabase(){
+  if(state.myRole!=='super_admin'){ showNotice('Only a Qibla Owner can do this.', 'error'); return; }
+  if(!requireOnline()) return;
+  for(const group of [...state.groups]){
+    const { error: hajiErr } = await sb.from('hajis').delete().eq('group_id', group.id);
+    if(hajiErr){ showNotice(hajiErr.message, 'error'); return; }
+    const { error: tripErr } = await sb.from('trip_types').delete().eq('group_id', group.id);
+    if(tripErr){ showNotice(tripErr.message, 'error'); return; }
+    const { error: groupErr } = await sb.from('groups').delete().eq('id', group.id);
+    if(groupErr){ showNotice(groupErr.message, 'error'); return; }
+  }
+  for(const hotel of [...state.hotels]){
+    const { error: hotelErr } = await sb.from('hotels').delete().eq('id', hotel.id);
+    if(hotelErr){ showNotice(hotelErr.message, 'error'); return; }
+  }
+  closeModal();
+  state.activeGroupId = null;
+  await loadAll();
+  showNotice('The entire database has been permanently wiped.', 'success');
 }
 async function toggleHajiSection(key, checked){
   const rs = state.roleSettings.find(r=>r.role==='haji');
@@ -2600,6 +2630,29 @@ function renderModal(){
         <button class="ghost" onclick="closeModal()">Cancel</button>
       </div>
     ` : `<h3>Group not found</h3><button class="ghost" style="width:100%;" onclick="closeModal()">Close</button>`;
+  } else if(type==='deleteAllConfirmStep1'){
+    body = `
+      <h3 style="color:var(--danger);">Wipe the entire database?</h3>
+      <p style="font-size:13px;margin-bottom:12px;">This permanently deletes <strong>every group and everything in them</strong> — all hajis, rooms, buses, payments, trip types, and packages — plus all hotels. Staff accounts and settings are kept. This cannot be undone and affects every user.</p>
+      <p style="font-size:13px;margin-bottom:12px;">Right now that's <strong>${state.groups.length} group${state.groups.length===1?'':'s'}</strong> and <strong>${state.hotels.length} hotel${state.hotels.length===1?'':'s'}</strong>.</p>
+      <div style="display:flex;gap:8px;margin-top:16px;">
+        <button class="danger" style="flex:1" onclick="openModal('deleteAllConfirmStep2')">I understand, continue</button>
+        <button class="ghost" onclick="closeModal()">Cancel</button>
+      </div>
+    `;
+  } else if(type==='deleteAllConfirmStep2'){
+    body = `
+      <h3 style="color:var(--danger);">Final confirmation</h3>
+      <p style="font-size:13px;margin-bottom:12px;">Type <strong class="mono">${DELETE_ALL_CONFIRM_PHRASE}</strong> to permanently wipe the database. This is your last chance to back out.</p>
+      <div class="field">
+        <label>Type ${DELETE_ALL_CONFIRM_PHRASE} to confirm</label>
+        <input id="delete-all-confirm-input" placeholder="${DELETE_ALL_CONFIRM_PHRASE}" oninput="toggleDeleteAllButton()"/>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:16px;">
+        <button id="delete-all-confirm-btn" class="danger" style="flex:1" disabled onclick="deleteEntireDatabase()">Permanently wipe database</button>
+        <button class="ghost" onclick="closeModal()">Cancel</button>
+      </div>
+    `;
   } else if(type==='bulkImport'){
     const entity = data.entity || 'hajis';
     const def = BULK_IMPORT_DEFS[entity];
