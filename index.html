@@ -1473,7 +1473,7 @@ const BULK_IMPORT_DEFS = {
   hajis: {
     table: 'hajis',
     title: 'Bulk import hajis',
-    hint: 'One per line: <span class="mono">Full name, Passport no, Phone, Gender, Family code, Flight no, Group no, Q no, Room no</span><br/>Room no is matched against rooms already added for this group and auto-assigns the pilgrim — leave blank to skip.',
+    hint: 'One per line: <span class="mono">Full name, Passport no, Phone, Gender, Family code, Flight no, Group no, Q no, Room no</span><br/>Room no auto-assigns the pilgrim, creating the room (Mecca, capacity 4, family) if it doesn\'t exist yet — leave blank to skip.',
     placeholder: 'Ahmed Ismail, A1234567, 7771234, male, FAM01, EK625, G1, Q-00231, 1204',
     parse(line){
       const [full_name, passport_no, phone, gender, family_code, flight_number, group_number, q_number, room_number] = parseCsvLine(line);
@@ -1499,16 +1499,15 @@ const BULK_IMPORT_DEFS = {
   buses: {
     table: 'buses',
     title: 'Bulk import buses',
-    hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Helper name, Capacity, Trip name (ziyarat only)</span><br/>Helper and trip name are matched against staff/trip types already added — the helper counts toward capacity.',
+    hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Helper name, Capacity, Trip name (ziyarat only)</span><br/>Helper is matched against staff already added (unmatched names are left blank). A trip name that doesn\'t exist yet is created automatically — the helper counts toward capacity.',
     placeholder: 'ziyarat, B-12, Ali Hassan, 45, Hira',
     parse(line){
       const [leg, bus_number, helperName, capacity, tripName] = parseCsvLine(line);
       if(!bus_number) return null;
       const legs = ['airport_transfer','mecca_madinah','ziyarat'];
       const normalizedLeg = legs.includes((leg||'').toLowerCase())?leg.toLowerCase():'airport_transfer';
-      const trip = normalizedLeg==='ziyarat' && tripName ? state.tripTypes.find(t=>t.name.toLowerCase()===tripName.toLowerCase()) : null;
       const helper = helperName ? state.staffList.find(s=>s.full_name.toLowerCase()===helperName.toLowerCase()) : null;
-      return { group_id: state.activeGroupId, leg: normalizedLeg, bus_number, helper_staff_id: helper?helper.id:null, capacity: parseInt(capacity||'45'), trip_type_id: trip?trip.id:null };
+      return { group_id: state.activeGroupId, leg: normalizedLeg, bus_number, helper_staff_id: helper?helper.id:null, capacity: parseInt(capacity||'45'), _tripName: normalizedLeg==='ziyarat' ? (tripName||null) : null };
     }
   },
   hotels: {
@@ -1555,10 +1554,6 @@ const BULK_IMPORT_GROUP_SCOPED = new Set(['hajis','rooms','buses','tripTypes','p
 
 function openBulkImportFromSettings(){
   const entity = document.getElementById('bulk-import-entity').value;
-  if(BULK_IMPORT_GROUP_SCOPED.has(entity) && !state.activeGroupId){
-    showNotice('Select an active group first (Groups tab), then come back to Settings.', 'error');
-    return;
-  }
   openModal('bulkImport', {entity, groupId: state.activeGroupId});
 }
 
@@ -1574,27 +1569,69 @@ function handleCsvFileUpload(input){
   reader.readAsText(file);
 }
 
+function stripTempKeys(row){
+  return Object.fromEntries(Object.entries(row).filter(([k])=>!k.startsWith('_')));
+}
+
 async function bulkImportCSV(entity, groupId){
   entity = entity || 'hajis';
   const def = BULK_IMPORT_DEFS[entity];
   const text = document.getElementById('csv-text').value.trim();
   if(!text || !def) return;
+
+  if(BULK_IMPORT_GROUP_SCOPED.has(entity) && !groupId){
+    const newGroupName = document.getElementById('bulk-import-group-name')?.value.trim();
+    if(!newGroupName){ showNotice('Enter a group name to create, or pick an active group under Groups first.', 'error'); return; }
+    const existingGroup = state.groups.find(g=>g.name.toLowerCase()===newGroupName.toLowerCase());
+    if(existingGroup){
+      groupId = existingGroup.id;
+    } else {
+      const { data: newGroup, error: groupErr } = await sb.from('groups').insert({name:newGroupName}).select().single();
+      if(groupErr){ showNotice(groupErr.message, 'error'); return; }
+      groupId = newGroup.id;
+      state.groups.push(newGroup);
+    }
+    state.activeGroupId = groupId;
+    await loadGroupData();
+  }
+
   let lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
   if(document.getElementById('csv-has-header')?.checked) lines = lines.slice(1);
   const parsed = lines.map(line=>def.parse(line, groupId)).filter(Boolean);
-  const rows = parsed.map(({_roomNumber, ...rest})=>rest);
+  let rows = parsed.map(stripTempKeys);
+
   if(rows.length){
     if(entity==='hajis'){
       const { data, error } = await sb.from(def.table).insert(rows).select();
       if(error){ showNotice(error.message, 'error'); return; }
+      const roomCache = new Map(state.rooms.map(r=>[r.room_number, r]));
       const assignments = [];
-      (data||[]).forEach((haji, i)=>{
+      for(let i=0; i<(data||[]).length; i++){
         const roomNumber = parsed[i]?._roomNumber;
-        if(!roomNumber) return;
-        const room = state.rooms.find(r=>r.room_number===roomNumber);
-        if(room) assignments.push({ room_id: room.id, haji_id: haji.id });
-      });
+        if(!roomNumber) continue;
+        let room = roomCache.get(roomNumber);
+        if(!room){
+          const { data: newRoom, error: roomErr } = await sb.from('rooms').insert({ group_id: groupId, hotel_leg:'mecca', room_number: roomNumber, capacity:4, gender:'family' }).select().single();
+          if(roomErr || !newRoom) continue;
+          room = newRoom;
+          roomCache.set(roomNumber, room);
+          state.rooms.push(room);
+        }
+        assignments.push({ room_id: room.id, haji_id: data[i].id });
+      }
       if(assignments.length) await sb.from('room_assignments').insert(assignments);
+    } else if(entity==='buses'){
+      const tripCache = new Map(state.tripTypes.map(t=>[t.name.toLowerCase(), t]));
+      for(const p of parsed){
+        if(!p._tripName || tripCache.has(p._tripName.toLowerCase())) continue;
+        const { data: newTrip, error: tripErr } = await sb.from('trip_types').insert({ group_id: groupId, name: p._tripName, price_adult:0, price_child:0 }).select().single();
+        if(tripErr || !newTrip) continue;
+        tripCache.set(p._tripName.toLowerCase(), newTrip);
+        state.tripTypes.push(newTrip);
+      }
+      rows = parsed.map(p=>({ ...stripTempKeys(p), trip_type_id: p._tripName ? (tripCache.get(p._tripName.toLowerCase())?.id||null) : null }));
+      const { error } = await sb.from(def.table).insert(rows);
+      if(error){ showNotice(error.message, 'error'); return; }
     } else {
       const { error } = await sb.from(def.table).insert(rows);
       if(error){ showNotice(error.message, 'error'); return; }
@@ -2295,7 +2332,7 @@ function renderSettings(){
         Paste CSV data to add many records at once.
         ${state.activeGroupId
           ? `Group-scoped imports (hajis, rooms, buses, trip types, packages) apply to the active group — <strong>${esc(state.groups.find(g=>g.id===state.activeGroupId)?.name||'')}</strong>.`
-          : `No active group selected — pick one under Groups first if you're importing hajis, rooms, buses, trip types, or packages.`}
+          : `No active group selected — for hajis, rooms, buses, trip types, or packages you'll be asked to name a new group, or you can pick an existing one under Groups first.`}
       </p>
       <div class="field">
         <label>What to import</label>
@@ -2307,7 +2344,48 @@ function renderSettings(){
       </div>
       <button class="gold" style="width:100%;" onclick="openBulkImportFromSettings()">Open bulk import</button>
     </div>
+    <div class="card" style="margin-bottom:16px;max-width:520px;border-color:var(--danger);">
+      <h3 style="margin-bottom:6px;color:var(--danger);">Danger zone</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:10px;">Permanently delete a group and everything under it — hajis, rooms, buses, payments, trip types, and packages. This cannot be undone. Only a Senior Sheikh can do this.</p>
+      <div class="field">
+        <label>Group to delete</label>
+        ${customSelectHtml({
+          id: 'danger-zone-group',
+          options: state.groups.map(g=>({value:g.id, label:g.name})),
+          placeholder: state.groups.length ? 'Select a group' : 'No groups yet'
+        })}
+      </div>
+      <button class="danger" style="width:100%;" ${state.groups.length?'':'disabled'} onclick="openDeleteGroupConfirm()">Delete group…</button>
+    </div>
   `;
+}
+function openDeleteGroupConfirm(){
+  const groupId = document.getElementById('danger-zone-group').value;
+  if(!groupId){ showNotice('Select a group to delete first.', 'error'); return; }
+  openModal('deleteGroupConfirm', {groupId});
+}
+function toggleDeleteGroupButton(groupId){
+  const group = state.groups.find(g=>g.id===groupId);
+  const input = document.getElementById('delete-group-confirm-input');
+  const btn = document.getElementById('delete-group-confirm-btn');
+  if(!group || !input || !btn) return;
+  btn.disabled = input.value.trim() !== group.name;
+}
+async function deleteGroupPermanently(groupId){
+  if(state.myRole!=='super_admin'){ showNotice('Only a Senior Sheikh can do this.', 'error'); return; }
+  if(!requireOnline()) return;
+  const group = state.groups.find(g=>g.id===groupId);
+  if(!group) return;
+  const { error: hajiErr } = await sb.from('hajis').delete().eq('group_id', groupId);
+  if(hajiErr){ showNotice(hajiErr.message, 'error'); return; }
+  const { error: tripErr } = await sb.from('trip_types').delete().eq('group_id', groupId);
+  if(tripErr){ showNotice(tripErr.message, 'error'); return; }
+  const { error: groupErr } = await sb.from('groups').delete().eq('id', groupId);
+  if(groupErr){ showNotice(groupErr.message, 'error'); return; }
+  closeModal();
+  if(state.activeGroupId === groupId) state.activeGroupId = null;
+  await loadAll();
+  showNotice(`"${group.name}" and all its data have been permanently deleted.`, 'success');
 }
 async function toggleHajiSection(key, checked){
   const rs = state.roleSettings.find(r=>r.role==='haji');
@@ -2508,12 +2586,34 @@ function renderModal(){
         </div>
       </form>
     `;
+  } else if(type==='deleteGroupConfirm'){
+    const group = state.groups.find(g=>g.id===data.groupId);
+    body = group ? `
+      <h3 style="color:var(--danger);">Delete "${esc(group.name)}"?</h3>
+      <p style="font-size:13px;margin-bottom:12px;">This permanently deletes <strong>all hajis, rooms, buses, payments, trip types, and packages</strong> under this group. This cannot be undone.</p>
+      <div class="field">
+        <label>Type the group name to confirm</label>
+        <input id="delete-group-confirm-input" placeholder="${esc(group.name)}" oninput="toggleDeleteGroupButton('${group.id}')"/>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:16px;">
+        <button id="delete-group-confirm-btn" class="danger" style="flex:1" disabled onclick="deleteGroupPermanently('${group.id}')">Permanently delete</button>
+        <button class="ghost" onclick="closeModal()">Cancel</button>
+      </div>
+    ` : `<h3>Group not found</h3><button class="ghost" style="width:100%;" onclick="closeModal()">Close</button>`;
   } else if(type==='bulkImport'){
     const entity = data.entity || 'hajis';
     const def = BULK_IMPORT_DEFS[entity];
+    const needsGroup = BULK_IMPORT_GROUP_SCOPED.has(entity) && !data.groupId;
     body = `
       <h3>${def.title}</h3>
       <p style="font-size:12px;color:#6b6252;">${def.hint}</p>
+      ${needsGroup ? `
+        <div class="field" style="margin-top:14px;">
+          <label>New group name</label>
+          <p style="font-size:11px;color:#8a8168;margin-bottom:4px;">No group is currently active. Enter a name to create one for this import, or cancel and pick an existing group under Groups first.</p>
+          <input id="bulk-import-group-name" placeholder="e.g. Batch 3 - September"/>
+        </div>
+      ` : ''}
       <div class="field" style="margin-top:14px;">
         <label>Upload CSV file</label>
         <input type="file" id="csv-file" accept=".csv,text/csv" onchange="handleCsvFileUpload(this)"/>
