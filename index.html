@@ -1241,7 +1241,7 @@ function renderAuth(){
             <button id="staff-signin-btn" class="primary" style="flex:1" onclick="doSignIn()">Sign in</button>
             <button id="staff-signup-btn" class="gold" style="flex:1" onclick="doSignUp()">Create staff account</button>
           </div>
-          <button class="link-btn" style="margin-top:12px;" onclick="doForgotPassword()">Forgot password?</button>
+          <button id="forgot-pass-btn" class="link-btn" style="margin-top:12px;" onclick="withBusyButton('forgot-pass-btn','Sending…',()=>doForgotPassword())">Forgot password?</button>
         ` : `
           <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Sign in with the passport number and phone number your group coordinator has on file for you.</p>
           <div class="field"><label>Passport number</label><input id="haji-passport" placeholder="e.g. A1234567" autocomplete="off" autofocus/></div>
@@ -1942,7 +1942,7 @@ function busCardsHtml(buses, leg){
       ${can('manageBuses') ? `
         <div style="display:flex;gap:8px;margin-top:8px;">
           <button class="ghost" style="flex:1;" onclick="openModal('bus', state.buses.find(x=>x.id==='${b.id}'))">Edit</button>
-          <button class="danger" style="flex:1;" onclick="deleteBus('${b.id}')">Remove</button>
+          <button id="del-bus-${b.id}" class="danger" style="flex:1;" onclick="withBusyButton('del-bus-${b.id}','Removing…',()=>deleteBus('${b.id}'))">Remove</button>
         </div>
       ` : ''}
     </div>`;
@@ -2282,7 +2282,7 @@ function renderTripCollector(){
         })}</div>
         <div><label>Reference</label><input id="collector-reference" value="${esc(tc.reference||'')}" oninput="state.tripCollector.reference=this.value" placeholder="Receipt no."/></div>
       </div>
-      <button class="primary" style="padding:12px 24px;" onclick="saveTripPayments()">Confirm & Save Payment</button>
+      <button id="save-trip-payments-btn" class="primary" style="padding:12px 24px;" onclick="withBusyButton('save-trip-payments-btn','Saving…',()=>saveTripPayments())">Confirm & Save Payment</button>
     </div>
   `;
 }
@@ -2702,15 +2702,15 @@ function renderModal(){
               <div class="assign-row">
                 <span>${esc(h.name)} ${h.is_default?'<span class="pill ok">Default</span>':''}</span>
                 <div class="row-actions">
-                  ${h.is_default?'':`<button class="ghost" onclick="setDefaultHotel('${h.id}','${leg}')">Set default</button>`}
-                  <button class="danger" onclick="deleteHotel('${h.id}')">Remove</button>
+                  ${h.is_default?'':`<button id="set-default-hotel-${h.id}" class="ghost" onclick="withBusyButton('set-default-hotel-${h.id}','Setting…',()=>setDefaultHotel('${h.id}','${leg}'))">Set default</button>`}
+                  <button id="del-hotel-${h.id}" class="danger" onclick="withBusyButton('del-hotel-${h.id}','Removing…',()=>deleteHotel('${h.id}'))">Remove</button>
                 </div>
               </div>
             `).join('') || '<div class="empty">No hotels added yet</div>'}
           </div>
           <div class="two-col">
             <input id="hotel-name-${leg}" placeholder="e.g. Hilton Makkah"/>
-            <button class="gold" onclick="addHotel('${leg}')">Add ${leg} hotel</button>
+            <button id="add-hotel-${leg}" class="gold" onclick="withBusyButton('add-hotel-${leg}','Adding…',()=>addHotel('${leg}'))">Add ${leg} hotel</button>
           </div>
         </div>
       `).join('')}
@@ -2722,14 +2722,14 @@ function renderModal(){
     body = `
       <h3>Packages</h3>
       <div class="assign-list" style="margin-bottom:14px;">
-        ${pkgs.map(p=>`<div class="assign-row"><span>${esc(p.name)} — ${fmt(p.price)}</span><button class="danger" onclick="deletePackage('${p.id}','${gid}')">Remove</button></div>`).join('') || '<div class="empty">No packages yet</div>'}
+        ${pkgs.map(p=>`<div class="assign-row"><span>${esc(p.name)} — ${fmt(p.price)}</span><button id="del-pkg-${p.id}" class="danger" onclick="withBusyButton('del-pkg-${p.id}','Removing…',()=>deletePackage('${p.id}','${gid}'))">Remove</button></div>`).join('') || '<div class="empty">No packages yet</div>'}
       </div>
       <div class="two-col">
         <input id="pkg-name" placeholder="e.g. Quad sharing"/>
         <input id="pkg-price" type="number" step="0.01" placeholder="Price (MVR)"/>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
-        <button class="gold" style="flex:1" onclick="addPackage('${gid}')">Add package</button>
+        <button id="add-pkg-btn" class="gold" style="flex:1" onclick="withBusyButton('add-pkg-btn','Adding…',()=>addPackage('${gid}'))">Add package</button>
         <button class="ghost" onclick="closeModal()">Close</button>
       </div>
     `;
@@ -2738,7 +2738,7 @@ function renderModal(){
       <h3>Ziyarat trip types</h3>
       <p style="font-size:12px;color:#6b6252;">Priced trips for this group (e.g. Hira, Taif, Jeddah, Meeqat) used by the trip payment collector. Under 5s always ride free.</p>
       <div class="assign-list" style="margin:10px 0 14px;">
-        ${state.tripTypes.map(t=>`<div class="assign-row"><span>${esc(t.name)} — Adult ${fmt(t.price_adult)} · Child (5-9) ${fmt(t.price_child)} · Under 5 free</span><button class="danger" onclick="deleteTripType('${t.id}')">Remove</button></div>`).join('') || '<div class="empty">No trip types yet</div>'}
+        ${state.tripTypes.map(t=>`<div class="assign-row"><span>${esc(t.name)} — Adult ${fmt(t.price_adult)} · Child (5-9) ${fmt(t.price_child)} · Under 5 free</span><button id="del-trip-type-${t.id}" class="danger" onclick="withBusyButton('del-trip-type-${t.id}','Removing…',()=>deleteTripType('${t.id}'))">Remove</button></div>`).join('') || '<div class="empty">No trip types yet</div>'}
       </div>
       <div class="field"><input id="trip-type-name" placeholder="e.g. Hira"/></div>
       <div class="two-col">
@@ -2746,7 +2746,7 @@ function renderModal(){
         <input id="trip-type-price-child" type="number" step="0.01" placeholder="Child 5-9 price (MVR)"/>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
-        <button class="gold" style="flex:1" onclick="addTripType()">Add trip type</button>
+        <button id="add-trip-type-btn" class="gold" style="flex:1" onclick="withBusyButton('add-trip-type-btn','Adding…',()=>addTripType())">Add trip type</button>
         <button class="ghost" onclick="closeModal()">Close</button>
       </div>
     `;
@@ -2833,7 +2833,7 @@ function renderModal(){
         <input id="delete-group-confirm-input" placeholder="${esc(group.name)}" oninput="toggleDeleteGroupButton('${group.id}')"/>
       </div>
       <div style="display:flex;gap:8px;margin-top:16px;">
-        <button id="delete-group-confirm-btn" class="danger" style="flex:1" disabled onclick="deleteGroupPermanently('${group.id}')">Permanently delete</button>
+        <button id="delete-group-confirm-btn" class="danger" style="flex:1" disabled onclick="withBusyButton('delete-group-confirm-btn','Deleting…',()=>deleteGroupPermanently('${group.id}'))">Permanently delete</button>
         <button class="ghost" onclick="closeModal()">Cancel</button>
       </div>
     ` : `<h3>Group not found</h3><button class="ghost" style="width:100%;" onclick="closeModal()">Close</button>`;
@@ -2856,7 +2856,7 @@ function renderModal(){
         <input id="delete-all-confirm-input" placeholder="${DELETE_ALL_CONFIRM_PHRASE}" oninput="toggleDeleteAllButton()"/>
       </div>
       <div style="display:flex;gap:8px;margin-top:16px;">
-        <button id="delete-all-confirm-btn" class="danger" style="flex:1" disabled onclick="deleteEntireDatabase()">Permanently wipe database</button>
+        <button id="delete-all-confirm-btn" class="danger" style="flex:1" disabled onclick="withBusyButton('delete-all-confirm-btn','Wiping…',()=>deleteEntireDatabase())">Permanently wipe database</button>
         <button class="ghost" onclick="closeModal()">Cancel</button>
       </div>
     `;
@@ -2992,15 +2992,16 @@ function renderModal(){
         ${bus.trip_type_id ? ` · Showing pilgrims booked for ${esc(tripLabel||'this trip')}` : ''}
       </p>
       <div class="assign-list">
-        ${families.map(fam=>{
+        ${families.map((fam,famIdx)=>{
           const assignedHere = fam.members.filter(h=>occIds.has(h.id)).length;
           const splitElsewhere = bus.trip_type_id ? familyBusSplit(fam.familyCode, bus.trip_type_id, bus.id) : [];
+          const assignBtnId = `assign-fam-btn-${bus.id}-${famIdx}`;
           return `
             <div class="family-cluster">
               ${fam.familyCode ? `
                 <div class="family-cluster-header">
                   <span><strong>${esc(fam.familyCode)}</strong> <span class="pill ${assignedHere===fam.members.length?'ok':'warn'}">${assignedHere}/${fam.members.length} here</span></span>
-                  ${assignedHere<fam.members.length ? `<button class="ghost" onclick="assignFamilyToBus('${bus.id}','${esc(fam.familyCode)}')">Assign whole family</button>` : ''}
+                  ${assignedHere<fam.members.length ? `<button id="${assignBtnId}" class="ghost" onclick="withBusyButton('${assignBtnId}','Assigning…',()=>assignFamilyToBus('${bus.id}','${esc(fam.familyCode)}'))">Assign whole family</button>` : ''}
                 </div>
                 ${splitElsewhere.length ? `<div class="family-warning">⚠ Also on ${splitElsewhere.map(s=>`Bus ${esc(s.bus.bus_number)} (${s.members.length})`).join(', ')}</div>` : ''}
               ` : ''}
