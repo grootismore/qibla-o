@@ -2477,8 +2477,6 @@ function exportHtmlToPdf(title, bodyHtml){
       th,td{padding:6px 8px;border-bottom:1px solid #ddd;font-size:12px;text-align:left;}
       th{background:#f2ecdd;text-transform:uppercase;font-size:10px;letter-spacing:.04em;}
       .total-row td{font-weight:700;border-top:2px solid #0E3B3A;border-bottom:none;}
-      .trip-band-b td{background:#faf6ea;}
-      .trip-subtotal-row td{font-weight:700;border-top:2px solid #0E3B3A;border-bottom:2px solid #0E3B3A;}
       @media print{ body{padding:0;} }
     </style></head>
     <body>${bodyHtml}</body></html>
@@ -2945,20 +2943,20 @@ function renderTripSummary(){
       : renderReportByTrip(rows)}
   `;
 }
-// Flattens the by-trip/by-category breakdown into plain rows, shared by both exporters.
+// Flattens the by-trip/by-category breakdown into plain rows for the XLSX sheet (one continuous list).
 function tripSummaryFlatRows(rows){
   const names = orderedTripNames(rows);
   const flat = [];
-  names.forEach((name, tripIndex)=>{
+  names.forEach(name=>{
     const group = rows.filter(r=>r.trip_name===name);
     let paidSubtotal = 0, focSubtotal = 0;
     REPORT_CATEGORIES.forEach(cat=>{
       const paid = group.filter(r=>r.category===cat && !r.is_foc).length;
       const foc = group.filter(r=>r.category===cat && r.is_foc).length;
       paidSubtotal += paid; focSubtotal += foc;
-      flat.push({ trip:name, category:cat, paid, foc, tripIndex });
+      flat.push({ trip:name, category:cat, paid, foc });
     });
-    flat.push({ trip:name, category:'Subtotal', paid:paidSubtotal, foc:focSubtotal, isSubtotal:true, tripIndex });
+    flat.push({ trip:name, category:'Subtotal', paid:paidSubtotal, foc:focSubtotal, isSubtotal:true });
   });
   return flat;
 }
@@ -2977,19 +2975,30 @@ function exportTripSummaryXlsx(){
 function exportTripSummaryPdf(){
   const fr = state.tripSummaryReport;
   const rows = reportRows(fr);
-  const flat = tripSummaryFlatRows(rows);
+  const names = orderedTripNames(rows);
   const body = `
     <h1>Trip Payment Summary</h1>
     <div class="sub">${esc(fr.dateFrom||'All time')} to ${esc(fr.dateTo||'today')}</div>
-    <table>
-      <thead><tr><th>Trip</th><th>Category</th><th>Paid</th><th>FOC</th></tr></thead>
-      <tbody>
-        ${flat.map(f=>{
-          const classes = [f.tripIndex%2? 'trip-band-b':'', f.isSubtotal?'trip-subtotal-row':''].filter(Boolean).join(' ');
-          return `<tr${classes?` class="${classes}"`:''}><td>${esc(f.trip)}</td><td>${f.isSubtotal?'Subtotal':esc(f.category)}</td><td>${f.paid}</td><td>${f.foc}</td></tr>`;
-        }).join('') || `<tr><td colspan="4">No trip payments in range.</td></tr>`}
-      </tbody>
-    </table>
+    ${names.length ? names.map(name=>{
+      const group = rows.filter(r=>r.trip_name===name);
+      const catRows = REPORT_CATEGORIES.map(cat=>({
+        cat,
+        paid: group.filter(r=>r.category===cat && !r.is_foc).length,
+        foc: group.filter(r=>r.category===cat && r.is_foc).length,
+      }));
+      const paidSubtotal = catRows.reduce((s,c)=>s+c.paid,0);
+      const focSubtotal = catRows.reduce((s,c)=>s+c.foc,0);
+      return `
+        <h2>${esc(name)}</h2>
+        <table>
+          <thead><tr><th>Category</th><th>Paid</th><th>FOC</th></tr></thead>
+          <tbody>
+            ${catRows.map(c=>`<tr><td>${esc(c.cat)}</td><td>${c.paid}</td><td>${c.foc}</td></tr>`).join('')}
+            <tr class="total-row"><td>Subtotal</td><td>${paidSubtotal}</td><td>${focSubtotal}</td></tr>
+          </tbody>
+        </table>
+      `;
+    }).join('') : `<p>No trip payments in range.</p>`}
   `;
   exportHtmlToPdf(`Trip Payment Summary`, body);
 }
