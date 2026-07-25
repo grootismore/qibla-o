@@ -139,12 +139,14 @@
   .capacity-bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:6px;}
   .capacity-fill{height:100%;background:var(--teal);}
   .capacity-fill.over{background:var(--danger);}
-  .collector-template{display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:10px 14px;background:var(--sand-deep);border-radius:8px;margin-bottom:12px;}
-  .trip-row{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);}
+  .collector-template{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;padding:10px 14px;background:var(--sand-deep);border-radius:8px;margin-bottom:12px;}
+  .trip-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 0;border-bottom:1px solid var(--line);}
   .trip-row:last-child{border-bottom:none;}
   .trip-row .who{min-width:170px;flex:1 1 170px;}
-  .trip-check{display:flex;align-items:center;gap:6px;font-size:12px;color:#4a4436;white-space:nowrap;}
-  .trip-check input{width:auto;}
+  .trip-check{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;font-size:12px;color:#4a4436;max-width:100%;}
+  .trip-check input{width:auto;flex-shrink:0;}
+  .trip-check-name{font-weight:600;}
+  .trip-check-price{color:#8a8168;white-space:nowrap;}
   .trip-total{font-weight:700;margin-left:auto;white-space:nowrap;}
   .collector-footer{position:sticky;bottom:0;background:var(--sand);border-top:2px solid var(--teal);padding:14px 18px;margin-top:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;border-radius:0 0 var(--radius) var(--radius);box-shadow:0 -4px 16px rgba(28,35,33,.08);}
   .collector-payment-fields{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;flex:1;min-width:280px;max-width:520px;}
@@ -221,6 +223,9 @@
     .collector-payment-fields{grid-template-columns:1fr;min-width:0;}
     .collector-footer{position:static;flex-direction:column;align-items:stretch;box-shadow:none;}
     .trip-row .who{min-width:100%;}
+    .collector-template .trip-check,.trip-row .trip-check{flex:1 1 100%;}
+    .trip-row{gap:8px;}
+    .trip-total{margin-left:0;}
     .mobile-topbar{
       display:flex;align-items:center;justify-content:center;
       position:sticky;top:0;z-index:40;
@@ -2489,7 +2494,7 @@ function tripCheckboxHtml(tripType, checked, onchangeExpr, category){
   const priceLabel = category
     ? (category==='Under 5' ? 'Free' : fmt(priceForCategory(tripType, category)))
     : `${fmt(tripType.price_adult)} adult / ${fmt(tripType.price_child)} child`;
-  return `<label class="trip-check"><input type="checkbox" ${checked?'checked':''} onchange="${onchangeExpr}"/> ${esc(tripType.name)} <span class="mono" style="color:#8a8168;">${priceLabel}</span></label>`;
+  return `<label class="trip-check"><input type="checkbox" ${checked?'checked':''} onchange="${onchangeExpr}"/><span class="trip-check-name">${esc(tripType.name)}</span><span class="trip-check-price mono">${priceLabel}</span></label>`;
 }
 function renderTripCollector(){
   const tc = state.tripCollector;
