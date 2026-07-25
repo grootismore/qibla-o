@@ -175,13 +175,16 @@
   .cdate-panel{display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:220;width:260px;background:#fffdf7;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(28,35,33,.18);padding:12px;}
   .cdate.open .cdate-panel{display:block;}
   .cdate-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
-  .cdate-month-label{font-weight:700;font-size:13px;color:var(--teal);}
+  .cdate-month-label{font-weight:700;font-size:13px;color:var(--teal);background:transparent;border:1px solid transparent;border-radius:6px;padding:3px 8px;cursor:pointer;}
+  .cdate-month-label:hover{background:var(--sand-deep);border-color:var(--line);}
   .cdate-nav{background:transparent;border:1px solid var(--line);border-radius:6px;width:26px;height:26px;padding:0;font-size:15px;line-height:1;color:var(--teal);}
   .cdate-nav:hover{background:var(--sand-deep);}
   .cdate-weekdays{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:2px;}
   .cdate-weekday{text-align:center;font-size:10px;font-weight:700;color:#8a8168;text-transform:uppercase;}
   .cdate-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}
+  .cdate-grid-months,.cdate-grid-years{grid-template-columns:repeat(3,1fr);gap:4px;}
   .cdate-cell{text-align:center;padding:6px 0;font-size:12.5px;border-radius:6px;cursor:pointer;}
+  .cdate-grid-months .cdate-cell,.cdate-grid-years .cdate-cell{padding:12px 0;}
   .cdate-cell.empty{cursor:default;}
   .cdate-cell:not(.empty):hover{background:var(--sand-deep);}
   .cdate-cell.today{border:1px solid var(--gold);}
@@ -1145,11 +1148,12 @@ function renderCDateGrid(wrap, year, month){
     if(iso===todayIso) cls.push('today');
     cells += `<div class="${cls.join(' ')}" data-date="${iso}">${d}</div>`;
   }
+  panel.setAttribute('data-mode', 'days');
   panel.setAttribute('data-view', `${year}-${month}`);
   panel.innerHTML = `
     <div class="cdate-header">
       <button type="button" class="cdate-nav cdate-prev" aria-label="Previous month">‹</button>
-      <span class="cdate-month-label">${CDATE_MONTHS[month]} ${year}</span>
+      <button type="button" class="cdate-month-label" aria-label="Choose a month and year">${CDATE_MONTHS[month]} ${year}</button>
       <button type="button" class="cdate-nav cdate-next" aria-label="Next month">›</button>
     </div>
     <div class="cdate-weekdays">${CDATE_WEEKDAYS.map(w=>`<div class="cdate-weekday">${w}</div>`).join('')}</div>
@@ -1158,6 +1162,42 @@ function renderCDateGrid(wrap, year, month){
       <button type="button" class="ghost cdate-today" style="flex:1;">Today</button>
       <button type="button" class="ghost cdate-clear" style="flex:1;">Clear</button>
     </div>
+  `;
+}
+
+// Month grid (pick a month within a year) -- the middle rung between the day grid and the
+// year grid, so jumping to a far-off date like a 1995 birthday takes a handful of clicks
+// instead of hundreds of single-month "previous" clicks.
+function renderCDateMonths(wrap, year){
+  const panel = wrap.querySelector('.cdate-panel');
+  const cells = CDATE_MONTHS.map((name,i)=>`<div class="cdate-cell" data-month="${i}">${name.slice(0,3)}</div>`).join('');
+  panel.setAttribute('data-mode', 'months');
+  panel.setAttribute('data-view', String(year));
+  panel.innerHTML = `
+    <div class="cdate-header">
+      <button type="button" class="cdate-nav cdate-prev" aria-label="Previous year">‹</button>
+      <button type="button" class="cdate-month-label" aria-label="Choose a year">${year}</button>
+      <button type="button" class="cdate-nav cdate-next" aria-label="Next year">›</button>
+    </div>
+    <div class="cdate-grid cdate-grid-months">${cells}</div>
+  `;
+}
+
+// Year grid, 12 years at a time -- "‹"/"›" page a full decade-plus at once.
+function renderCDateYears(wrap, startYear){
+  const panel = wrap.querySelector('.cdate-panel');
+  const thisYear = new Date().getFullYear();
+  const years = Array.from({length:12}, (_,i)=>startYear+i);
+  const cells = years.map(y=>`<div class="cdate-cell${y===thisYear?' today':''}" data-year="${y}">${y}</div>`).join('');
+  panel.setAttribute('data-mode', 'years');
+  panel.setAttribute('data-view', String(startYear));
+  panel.innerHTML = `
+    <div class="cdate-header">
+      <button type="button" class="cdate-nav cdate-prev" aria-label="Previous 12 years">‹</button>
+      <span class="cdate-month-label" style="cursor:default;">${years[0]}–${years[years.length-1]}</span>
+      <button type="button" class="cdate-nav cdate-next" aria-label="Next 12 years">›</button>
+    </div>
+    <div class="cdate-grid cdate-grid-years">${cells}</div>
   `;
 }
 
@@ -1209,7 +1249,21 @@ document.addEventListener('click', (e)=>{
     }
     return;
   }
-  const daycell = e.target.closest('.cdate-cell:not(.empty)');
+  const monthCell = e.target.closest('.cdate-cell[data-month]');
+  if(monthCell){
+    const wrap = monthCell.closest('.cdate');
+    const panel = wrap.querySelector('.cdate-panel');
+    const year = Number(panel.getAttribute('data-view'));
+    renderCDateGrid(wrap, year, Number(monthCell.getAttribute('data-month')));
+    return;
+  }
+  const yearCell = e.target.closest('.cdate-cell[data-year]');
+  if(yearCell){
+    const wrap = yearCell.closest('.cdate');
+    renderCDateMonths(wrap, Number(yearCell.getAttribute('data-year')));
+    return;
+  }
+  const daycell = e.target.closest('.cdate-cell[data-date]');
   if(daycell){
     const wrap = daycell.closest('.cdate');
     const hidden = wrap.querySelector('input[type=hidden]');
@@ -1222,14 +1276,38 @@ document.addEventListener('click', (e)=>{
     wrap.classList.remove('open');
     return;
   }
+  const monthLabelBtn = e.target.closest('.cdate-month-label');
+  if(monthLabelBtn){
+    const wrap = monthLabelBtn.closest('.cdate');
+    const panel = wrap.querySelector('.cdate-panel');
+    const mode = panel.getAttribute('data-mode');
+    if(mode==='days'){
+      const [y] = panel.getAttribute('data-view').split('-').map(Number);
+      renderCDateMonths(wrap, y);
+    } else if(mode==='months'){
+      const y = Number(panel.getAttribute('data-view'));
+      renderCDateYears(wrap, y - 5); // keep the clicked year visible within the page of 12
+    }
+    return;
+  }
   const navBtn = e.target.closest('.cdate-nav');
   if(navBtn){
     const wrap = navBtn.closest('.cdate');
     const panel = wrap.querySelector('.cdate-panel');
-    let [y,m] = panel.getAttribute('data-view').split('-').map(Number);
-    m += navBtn.classList.contains('cdate-next') ? 1 : -1;
-    if(m<0){ m=11; y--; } if(m>11){ m=0; y++; }
-    renderCDateGrid(wrap, y, m);
+    const mode = panel.getAttribute('data-mode');
+    const dir = navBtn.classList.contains('cdate-next') ? 1 : -1;
+    if(mode==='years'){
+      const startYear = Number(panel.getAttribute('data-view'));
+      renderCDateYears(wrap, startYear + dir*12);
+    } else if(mode==='months'){
+      const year = Number(panel.getAttribute('data-view'));
+      renderCDateMonths(wrap, year + dir);
+    } else {
+      let [y,m] = panel.getAttribute('data-view').split('-').map(Number);
+      m += dir;
+      if(m<0){ m=11; y--; } if(m>11){ m=0; y++; }
+      renderCDateGrid(wrap, y, m);
+    }
     return;
   }
   const todayBtn = e.target.closest('.cdate-today');
