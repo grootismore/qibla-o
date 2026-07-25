@@ -369,6 +369,7 @@ let state = {
   groups: [],
   activeGroupId: null,
   selectedMonth: null,
+  umrahMonths: [],
   packages: [],
   hajis: [],
   rooms: [],
@@ -431,6 +432,7 @@ function saveCacheSnapshot(){
       groups: state.groups,
       hotels: state.hotels,
       roleSettings: state.roleSettings,
+      umrahMonths: state.umrahMonths,
       activeGroupId: state.activeGroupId,
       packages: state.packages,
       hajis: state.hajis,
@@ -460,6 +462,7 @@ function restoreFromCache(){
   state.groups = snap.groups||[];
   state.hotels = snap.hotels||[];
   state.roleSettings = snap.roleSettings||[];
+  state.umrahMonths = snap.umrahMonths||[];
   state.activeGroupId = state.activeGroupId || snap.activeGroupId;
   state.packages = snap.packages||[];
   state.hajis = snap.hajis||[];
@@ -720,13 +723,15 @@ function applyRestoredView(){
   state.view = def ? def.activeViews[0] : 'dashboard';
 }
 async function loadAll(){
-  const [{data:groups},{data:hotels},{data:roleSettings},{data:staffList}] = await Promise.all([
+  const [{data:groups},{data:hotels},{data:roleSettings},{data:staffList},{data:umrahMonths}] = await Promise.all([
     sb.from('groups').select('*').order('departure_date', {ascending:true}),
     sb.from('hotels').select('*').order('name'),
     sb.from('role_settings').select('*'),
     sb.from('staff').select('*').order('full_name'),
+    sb.from('umrah_months').select('*').order('month_key'),
   ]);
   state.groups = groups || [];
+  state.umrahMonths = umrahMonths || [];
   if(!state.activeGroupId && state.groups.length) state.activeGroupId = state.groups[0].id;
   if(!state.selectedMonth) state.selectedMonth = currentRunningUmrahMonth() || 'all';
   state.hotels = hotels || [];
@@ -906,14 +911,20 @@ function hajiSummaryLine(h, maps){
 function groupMonthKey(g){
   return g.departure_date ? g.departure_date.slice(0,7) : 'unscheduled';
 }
+function umrahMonthByKey(key){ return state.umrahMonths.find(m=>m.month_key===key); }
 function groupMonthLabel(key){
   if(key==='unscheduled') return 'Unscheduled';
+  const schedule = umrahMonthByKey(key);
+  if(schedule?.label) return schedule.label;
   const [y,m] = key.split('-').map(Number);
   if(!y||!m) return key;
   return new Date(y, m-1, 1).toLocaleDateString(undefined, {year:'numeric', month:'long'});
 }
 function availableUmrahMonths(){
+  // Union of months inferred from group departure dates and months an admin has explicitly
+  // scheduled (so a month can be set up in Settings before any group exists for it yet).
   const keys = new Set(state.groups.map(groupMonthKey));
+  state.umrahMonths.forEach(m=>keys.add(m.month_key));
   return [...keys].sort((a,b)=>{
     if(a==='unscheduled') return 1;
     if(b==='unscheduled') return -1;
@@ -921,6 +932,8 @@ function availableUmrahMonths(){
   });
 }
 function currentRunningUmrahMonth(){
+  const pinned = state.umrahMonths.find(m=>m.is_current);
+  if(pinned) return pinned.month_key;
   const months = availableUmrahMonths().filter(k=>k!=='unscheduled');
   if(!months.length) return null;
   const todayKey = new Date().toISOString().slice(0,7);
@@ -949,6 +962,45 @@ function monthSelectorHtml(){
     value: state.selectedMonth || 'all',
     onChange: 'selectUmrahMonth(this.value)'
   });
+}
+
+// ---------- UMRAH MONTH SCHEDULES (Settings, admins only) ----------
+async function saveUmrahMonth(e, id){
+  e.preventDefault();
+  if(!requireOnline()) return;
+  const f = e.target;
+  const monthKey = f.month_key.value;
+  if(!/^\d{4}-\d{2}$/.test(monthKey)){ showNotice('Enter the month as YYYY-MM, e.g. 2026-07.', 'error'); return; }
+  const payload = {
+    month_key: monthKey,
+    label: f.label.value.trim() || null,
+    start_date: f.start_date.value || null,
+    end_date: f.end_date.value || null,
+  };
+  let error;
+  if(id) ({ error } = await sb.from('umrah_months').update(payload).eq('id', id));
+  else ({ error } = await sb.from('umrah_months').insert(payload));
+  if(error){ showNotice(error.message, 'error'); return; }
+  const { data } = await sb.from('umrah_months').select('*').order('month_key');
+  state.umrahMonths = data || [];
+  closeModal();
+  render();
+}
+async function deleteUmrahMonth(id){
+  if(!requireOnline()) return;
+  const { error } = await sb.from('umrah_months').delete().eq('id', id);
+  if(error){ showNotice(error.message, 'error'); return; }
+  state.umrahMonths = state.umrahMonths.filter(m=>m.id!==id);
+  render();
+}
+async function setCurrentUmrahMonth(id){
+  if(!requireOnline()) return;
+  await sb.from('umrah_months').update({is_current:false}).eq('is_current', true);
+  const { error } = await sb.from('umrah_months').update({is_current:true}).eq('id', id);
+  if(error){ showNotice(error.message, 'error'); return; }
+  const { data } = await sb.from('umrah_months').select('*').order('month_key');
+  state.umrahMonths = data || [];
+  render();
 }
 function groupSummaryLine(g){
   const parts = [];
@@ -2705,6 +2757,26 @@ function renderSettings(){
       </div>
     </div>
     <div class="card" style="margin-bottom:16px;max-width:520px;">
+      <h3 style="margin-bottom:6px;">Umrah month schedules</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:10px;">Define the Umrah months Qibla offers this season. Groups fall into a month automatically by their departure date; pin one as the month that's currently running, or give a month a custom label or date range.</p>
+      <div class="assign-list" style="margin-bottom:12px;">
+        ${[...state.umrahMonths].sort((a,b)=>a.month_key.localeCompare(b.month_key)).map(m=>`
+          <div class="assign-row">
+            <span>
+              ${esc(m.label || groupMonthLabel(m.month_key))} <span style="color:#8a8168;">(${esc(m.month_key)})</span> ${m.is_current?'<span class="pill ok">Current</span>':''}
+              ${(m.start_date||m.end_date) ? `<div style="font-size:11px;color:#8a8168;">${esc(m.start_date||'—')} to ${esc(m.end_date||'—')}</div>` : ''}
+            </span>
+            <div class="row-actions">
+              ${(!m.is_current && can('manageGroups')) ? `<button id="set-current-month-${m.id}" class="ghost" onclick="withBusyButton('set-current-month-${m.id}','Setting…',()=>setCurrentUmrahMonth('${m.id}'))">Set current</button>` : ''}
+              ${can('manageGroups') ? `<button class="ghost" onclick="openModal('umrahMonth', state.umrahMonths.find(x=>x.id==='${m.id}'))">Edit</button>
+              <button id="del-month-${m.id}" class="danger" onclick="withBusyButton('del-month-${m.id}','Removing…',()=>deleteUmrahMonth('${m.id}'))">Remove</button>` : ''}
+            </div>
+          </div>
+        `).join('') || `<div class="empty">No months scheduled yet — they're inferred from group departure dates until you add one.</div>`}
+      </div>
+      ${can('manageGroups') ? `<button class="ghost" style="width:100%;" onclick="openModal('umrahMonth', {})">+ Add month</button>` : ''}
+    </div>
+    <div class="card" style="margin-bottom:16px;max-width:520px;">
       <h3 style="margin-bottom:6px;">Bulk data import</h3>
       <p style="font-size:12px;color:#6b6252;margin-bottom:10px;">
         Add many hajis, rooms, buses, hotels, trip types, or packages at once from a CSV file.
@@ -2911,6 +2983,22 @@ function renderModal(){
         <button id="add-trip-type-btn" class="gold" style="flex:1" onclick="withBusyButton('add-trip-type-btn','Adding…',()=>addTripType())">Add trip type</button>
         <button class="ghost" onclick="closeModal()">Close</button>
       </div>
+    `;
+  } else if(type==='umrahMonth'){
+    body = `
+      <h3>${data.id?'Edit month':'Add Umrah month'}</h3>
+      <form onsubmit="saveUmrahMonth(event, ${data.id?`'${data.id}'`:'null'})">
+        <div class="field"><label>Month</label><input name="month_key" value="${esc(data.month_key||'')}" placeholder="YYYY-MM, e.g. 2026-07" required/></div>
+        <div class="field"><label>Custom label (optional)</label><input name="label" value="${esc(data.label||'')}" placeholder="Defaults to e.g. “July 2026”"/></div>
+        <div class="two-col">
+          <div class="field"><label>Starts</label>${customDateHtml({ name:'start_date', value: data.start_date||'', placeholder:'Optional' })}</div>
+          <div class="field"><label>Ends</label>${customDateHtml({ name:'end_date', value: data.end_date||'', placeholder:'Optional' })}</div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="submit" class="primary" style="flex:1">Save</button>
+          <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
     `;
   } else if(type==='hajiDetail'){
     const h = data;
