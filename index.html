@@ -1612,13 +1612,12 @@ function renderDashboard(){
   `;
 
   const monthRooms = state.rooms.filter(r=>monthGids.has(r.group_id));
-  const monthBuses = state.buses.filter(b=>monthGids.has(b.group_id));
   const overviewHtml = `
     <div class="grid grid-4" style="margin-bottom:20px;">
       <div class="friendly-card"><div class="stat-icon-badge">${icon('groups',20)}</div><div><div class="stat-label">Groups</div><div class="stat-value">${monthGroups.length}</div></div></div>
       <div class="friendly-card"><div class="stat-icon-badge">${icon('hajis',20)}</div><div><div class="stat-label">Hajjis</div><div class="stat-value">${sumCountsForGroups(state.groupHajiCounts, monthGroups)}</div></div></div>
       <div class="friendly-card"><div class="stat-icon-badge">${icon('rooms',20)}</div><div><div class="stat-label">Rooms booked</div><div class="stat-value">${monthRooms.length}</div></div></div>
-      <div class="friendly-card"><div class="stat-icon-badge">${icon('buses',20)}</div><div><div class="stat-label">Buses booked</div><div class="stat-value">${monthBuses.length}</div></div></div>
+      <div class="friendly-card"><div class="stat-icon-badge">${icon('buses',20)}</div><div><div class="stat-label">Buses (company-wide)</div><div class="stat-value">${state.buses.length}</div></div></div>
     </div>
   `;
   if(!state.groups.length) return headerHtml + `<div class="empty"><h3>No groups yet</h3><p>Create a group to get started.</p></div>`;
@@ -1664,7 +1663,6 @@ function renderDashboard(){
 function renderGroups(){
   const monthGroups = groupsInSelectedMonth();
   const monthRooms = state.rooms.filter(r=>monthGroups.some(g=>g.id===r.group_id)).length;
-  const monthBuses = state.buses.filter(b=>monthGroups.some(g=>g.id===b.group_id)).length;
   const sortedGroups = [...monthGroups].sort((a,b)=>(state.groupHajiCounts.get(b.id)||0)-(state.groupHajiCounts.get(a.id)||0));
   return `
     <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
@@ -1674,7 +1672,7 @@ function renderGroups(){
       <div class="card"><div class="stat-label">Groups</div><div class="stat-value">${monthGroups.length}</div></div>
       <div class="card"><div class="stat-label">Total hajjis</div><div class="stat-value">${sumCountsForGroups(state.groupHajiCounts, monthGroups)}</div></div>
       <div class="card"><div class="stat-label">Rooms booked</div><div class="stat-value">${monthRooms}</div></div>
-      <div class="card"><div class="stat-label">Buses booked</div><div class="stat-value">${monthBuses}</div></div>
+      <div class="card"><div class="stat-label">Buses (company-wide)</div><div class="stat-value">${state.buses.length}</div></div>
     </div>
     <div class="toolbar">
       ${can('manageGroups') ? `<button class="primary" onclick="openModal('group')">+ New group</button>
@@ -1947,13 +1945,13 @@ const BULK_IMPORT_DEFS = {
     title: 'Bulk import buses',
     hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Helper name, Capacity, Trip name (ziyarat only)</span><br/>Helper is matched against staff already added (unmatched names are left blank). A trip name that doesn\'t exist yet is created automatically — the helper counts toward capacity.',
     placeholder: 'ziyarat, B-12, Ali Hassan, 45, Hira',
-    parse(line, groupId){
+    parse(line){
       const [leg, bus_number, helperName, capacity, tripName] = parseCsvLine(line);
       if(!bus_number) return null;
       const legs = ['airport_transfer','mecca_madinah','ziyarat'];
       const normalizedLeg = legs.includes((leg||'').toLowerCase())?leg.toLowerCase():'airport_transfer';
       const helper = helperName ? state.staffList.find(s=>s.full_name.toLowerCase()===helperName.toLowerCase()) : null;
-      return { group_id: groupId, leg: normalizedLeg, bus_number, helper_staff_id: helper?helper.id:null, capacity: parseInt(capacity||'45'), _tripName: normalizedLeg==='ziyarat' ? (tripName||null) : null };
+      return { leg: normalizedLeg, bus_number, helper_staff_id: helper?helper.id:null, capacity: parseInt(capacity||'45'), _tripName: normalizedLeg==='ziyarat' ? (tripName||null) : null };
     }
   },
   hotels: {
@@ -1996,7 +1994,7 @@ const BULK_IMPORT_ENTITY_LABELS = {
   tripTypes: 'Ziyarat trip types',
   packages: 'Packages'
 };
-const BULK_IMPORT_GROUP_SCOPED = new Set(['hajis','rooms','buses','packages']);
+const BULK_IMPORT_GROUP_SCOPED = new Set(['hajis','rooms','packages']);
 
 function handleCsvFileUpload(input){
   const file = input.files?.[0];
@@ -2252,13 +2250,11 @@ function busCardsHtml(buses, leg){
     const total = occ.length + (helper?1:0);
     const over = total > b.capacity;
     const trip = leg==='ziyarat' ? state.tripTypes.find(t=>t.id===b.trip_type_id) : null;
-    const grp = groupById(b.group_id);
     return `<div class="card">
       <div style="display:flex;justify-content:space-between;">
         <strong>Bus ${esc(b.bus_number)}</strong>
         <span class="pill ${over?'bad':'ok'}">${total}/${b.capacity}</span>
       </div>
-      ${grp ? `<div style="font-size:11px;color:#8a8168;margin-top:2px;">${esc(grp.name)}</div>` : ''}
       ${trip ? `<div style="margin:4px 0;"><span class="pill warn">${esc(trip.name)}</span></div>` : ''}
       <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Helper: ${helper?`${esc(helper.full_name)} (${esc(roleLabel(helper.role))})`:'—'}</div>
       <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,total/b.capacity*100)}%"></div></div>
@@ -2313,7 +2309,7 @@ async function saveBus(e, id){
   };
   let error;
   if(id) ({ error } = await sb.from('buses').update(payload).eq('id', id));
-  else ({ error } = await sb.from('buses').insert({ group_id: f.group_id.value, ...payload }));
+  else ({ error } = await sb.from('buses').insert(payload));
   if(error){ showNotice(error.message, 'error'); return; }
   closeModal(); await loadGroupData(); render();
 }
@@ -3578,18 +3574,10 @@ function renderModal(){
       <button class="ghost" style="width:100%;margin-top:12px;" onclick="closeModal()">Done</button>
     `;
   } else if(type==='bus'){
-    const busGroupId = data.group_id || state.activeGroupId || state.groups[0]?.id || '';
     body = `
       <h3>${data.id?'Edit bus':'Add bus'}</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:12px;">Buses aren't tied to one group — pilgrims from any group can be assigned to the same bus.</p>
       <form onsubmit="saveBus(event, ${data.id?`'${data.id}'`:'null'})">
-        <div class="field"><label>Group</label>
-          ${customSelectHtml({
-            name: 'group_id', required: true,
-            options: sortedGroupOptions(),
-            value: busGroupId,
-            placeholder: 'Select a group'
-          })}
-        </div>
         <div class="two-col">
           <div class="field"><label>Leg</label>${customSelectHtml({ name:'leg', options:[{value:'airport_transfer',label:'Airport transfer'},{value:'mecca_madinah',label:'Mecca ↔ Madinah'},{value:'ziyarat',label:'Ziyarat'}], value:data.leg, searchable:false, onChange:'toggleBusTripField(this)' })}</div>
           <div class="field"><label>Bus number</label><input name="bus_number" value="${esc(data.bus_number||'')}" required/></div>
@@ -3624,7 +3612,7 @@ function renderModal(){
     const occIds = new Set(busOccupants(bus.id).map(h=>h.id));
     const tripLabel = busTripLabel(bus);
     const helper = bus.helper_staff_id ? staffById(bus.helper_staff_id) : null;
-    const pool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis.filter(h=>h.group_id===bus.group_id);
+    const pool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis;
     const familiesMap = new Map();
     pool.forEach(h=>{
       const key = h.family_code || `__solo_${h.id}`;
@@ -3654,12 +3642,14 @@ function renderModal(){
                 </div>
                 ${splitElsewhere.length ? `<div class="family-warning">⚠ Also on ${splitElsewhere.map(s=>`Bus ${esc(s.bus.bus_number)} (${s.members.length})`).join(', ')}</div>` : ''}
               ` : ''}
-              ${fam.members.map(h=>`
+              ${fam.members.map(h=>{
+                const hGrp = groupById(h.group_id);
+                return `
                 <div class="assign-row">
-                  <span>${esc(h.full_name)}</span>
+                  <span>${esc(h.full_name)} ${hGrp?`<span style="color:#8a8168;">— ${esc(hGrp.name)}</span>`:''}</span>
                   <input type="checkbox" style="width:auto;" ${occIds.has(h.id)?'checked':''} onchange="toggleBusAssign('${bus.id}','${h.id}',this.checked)"/>
                 </div>
-              `).join('')}
+              `;}).join('')}
             </div>
           `;
         }).join('') || `<div class="empty">${bus.trip_type_id ? 'No pilgrims have booked this trip yet' : 'No hajis yet'}</div>`}
