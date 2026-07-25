@@ -58,6 +58,7 @@
   th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6b6252;padding:8px 10px;border-bottom:2px solid var(--teal);}
   td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle;}
   tr:hover td{background:#faf6ea;}
+  tr.total-row td{border-top:2px solid var(--teal);background:#faf6ea;}
   .card{background:#fffdf7;border:1px solid var(--line);border-radius:var(--radius);padding:18px;}
   .pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:700;}
   .pill.ok{background:#e0ecdf;color:var(--ok);}
@@ -275,6 +276,7 @@
     .table-wrap td:first-child{padding-top:0;}
     .table-wrap td:last-child{padding-bottom:0;}
     .table-wrap .row-actions{margin-top:4px;}
+    .table-wrap tr.total-row{background:#faf6ea;border-color:var(--teal);}
   }
 
   @media (max-width:420px){
@@ -2868,7 +2870,7 @@ function orderedTripNames(rows){
 }
 function renderReportByTrip(rows){
   const names = orderedTripNames(rows);
-  return `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));align-items:start;">
+  return `<div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr));align-items:start;gap:14px;">
     ${names.map(name=>{
       const group = rows.filter(r=>r.trip_name===name);
       const catRows = REPORT_CATEGORIES.map(cat=>({
@@ -2880,12 +2882,15 @@ function renderReportByTrip(rows){
       const focSubtotal = catRows.reduce((s,c)=>s+c.foc,0);
       return `
         <div class="card table-wrap">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <strong>${esc(name)}</strong>
+            <span class="pill ok">${paidSubtotal+focSubtotal} total</span>
+          </div>
           <table>
-            <thead><tr><th>Category</th><th>${esc(name)} Paid</th><th>${esc(name)} FOC</th></tr></thead>
+            <thead><tr><th>Category</th><th>Paid</th><th>FOC</th><th>Total</th></tr></thead>
             <tbody>
-              ${catRows.map(c=>`<tr><td>${c.cat}</td><td>${c.paid}</td><td>${c.foc}</td></tr>`).join('')}
-              <tr><td><strong>Subtotal</strong></td><td><strong>${paidSubtotal}</strong></td><td><strong>${focSubtotal}</strong></td></tr>
-              <tr><td><strong>Total</strong></td><td colspan="2"><strong>${paidSubtotal+focSubtotal}</strong></td></tr>
+              ${catRows.map(c=>`<tr><td>${c.cat}</td><td data-label="Paid">${c.paid}</td><td data-label="FOC">${c.foc}</td><td data-label="Total">${c.paid+c.foc}</td></tr>`).join('')}
+              <tr class="total-row"><td><strong>Subtotal</strong></td><td data-label="Paid"><strong>${paidSubtotal}</strong></td><td data-label="FOC"><strong>${focSubtotal}</strong></td><td data-label="Total"><strong>${paidSubtotal+focSubtotal}</strong></td></tr>
             </tbody>
           </table>
         </div>
