@@ -2477,6 +2477,8 @@ function exportHtmlToPdf(title, bodyHtml){
       th,td{padding:6px 8px;border-bottom:1px solid #ddd;font-size:12px;text-align:left;}
       th{background:#f2ecdd;text-transform:uppercase;font-size:10px;letter-spacing:.04em;}
       .total-row td{font-weight:700;border-top:2px solid #0E3B3A;border-bottom:none;}
+      .trip-band-b td{background:#faf6ea;}
+      .trip-subtotal-row td{font-weight:700;border-top:2px solid #0E3B3A;border-bottom:2px solid #0E3B3A;}
       @media print{ body{padding:0;} }
     </style></head>
     <body>${bodyHtml}</body></html>
@@ -2947,16 +2949,16 @@ function renderTripSummary(){
 function tripSummaryFlatRows(rows){
   const names = orderedTripNames(rows);
   const flat = [];
-  names.forEach(name=>{
+  names.forEach((name, tripIndex)=>{
     const group = rows.filter(r=>r.trip_name===name);
     let paidSubtotal = 0, focSubtotal = 0;
     REPORT_CATEGORIES.forEach(cat=>{
       const paid = group.filter(r=>r.category===cat && !r.is_foc).length;
       const foc = group.filter(r=>r.category===cat && r.is_foc).length;
       paidSubtotal += paid; focSubtotal += foc;
-      flat.push({ trip:name, category:cat, paid, foc });
+      flat.push({ trip:name, category:cat, paid, foc, tripIndex });
     });
-    flat.push({ trip:name, category:'Subtotal', paid:paidSubtotal, foc:focSubtotal, isSubtotal:true });
+    flat.push({ trip:name, category:'Subtotal', paid:paidSubtotal, foc:focSubtotal, isSubtotal:true, tripIndex });
   });
   return flat;
 }
@@ -2982,7 +2984,10 @@ function exportTripSummaryPdf(){
     <table>
       <thead><tr><th>Trip</th><th>Category</th><th>Paid</th><th>FOC</th></tr></thead>
       <tbody>
-        ${flat.map(f=>`<tr${f.isSubtotal?' class="total-row"':''}><td>${esc(f.trip)}</td><td>${f.isSubtotal?'Subtotal':esc(f.category)}</td><td>${f.paid}</td><td>${f.foc}</td></tr>`).join('') || `<tr><td colspan="4">No trip payments in range.</td></tr>`}
+        ${flat.map(f=>{
+          const classes = [f.tripIndex%2? 'trip-band-b':'', f.isSubtotal?'trip-subtotal-row':''].filter(Boolean).join(' ');
+          return `<tr${classes?` class="${classes}"`:''}><td>${esc(f.trip)}</td><td>${f.isSubtotal?'Subtotal':esc(f.category)}</td><td>${f.paid}</td><td>${f.foc}</td></tr>`;
+        }).join('') || `<tr><td colspan="4">No trip payments in range.</td></tr>`}
       </tbody>
     </table>
   `;
