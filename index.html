@@ -2275,19 +2275,19 @@ function renderTripCollector(){
   if(!groupTripTypes.length){
     return groupPickerHtml + `
       <div class="toolbar">
-        <button class="ghost" onclick="openModal('tripTypes',{groupId:tc.groupId})">Manage trip types</button>
+        <button class="ghost" onclick="openModal('tripTypes',{groupId:state.tripCollector.groupId})">Manage trip types</button>
       </div>
       <div class="empty">
         <h3>No trip types yet for this group</h3>
         <p>Add ziyarat trips (e.g. Hira, Taif, Jeddah, Meeqat) with prices first.</p>
-        <button class="gold" style="margin-top:10px;" onclick="openModal('tripTypes',{groupId:tc.groupId})">Manage trip types</button>
+        <button class="gold" style="margin-top:10px;" onclick="openModal('tripTypes',{groupId:state.tripCollector.groupId})">Manage trip types</button>
       </div>
     `;
   }
   const eligibleIds = collectorEligibleIds();
   return groupPickerHtml + `
     <div class="toolbar">
-      <button class="ghost" onclick="openModal('tripTypes',{groupId:tc.groupId})">Manage trip types</button>
+      <button class="ghost" onclick="openModal('tripTypes',{groupId:state.tripCollector.groupId})">Manage trip types</button>
       <button class="ghost" onclick="openTripSummary()">Trip payment summary</button>
       <button class="ghost" onclick="openTripDateReport()">Date-wise collection</button>
     </div>
