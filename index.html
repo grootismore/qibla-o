@@ -1529,20 +1529,22 @@ async function deletePackage(id, groupId){
 }
 
 // ---------- TRIP TYPES (ziyarat) ----------
-async function addTripType(groupId){
+// Trip types (Hira, Taif, Jeddah, Meeqat, etc.) are priced and offered company-wide for the
+// whole Umrah period -- not scoped to a single group.
+async function addTripType(){
   const name = document.getElementById('trip-type-name').value.trim();
   const price_adult = parseFloat(document.getElementById('trip-type-price-adult').value || '0');
   const price_child = parseFloat(document.getElementById('trip-type-price-child').value || '0');
-  if(!name || !groupId) return;
-  await sb.from('trip_types').insert({ group_id: groupId, name, price_adult, price_child });
-  const { data } = await sb.from('trip_types').select('*').eq('group_id', groupId).order('name');
-  state.tripTypes = [...state.tripTypes.filter(t=>t.group_id!==groupId), ...(data||[])];
-  openModal('tripTypes', {groupId});
+  if(!name) return;
+  await sb.from('trip_types').insert({ group_id: null, name, price_adult, price_child });
+  const { data } = await sb.from('trip_types').select('*').order('name');
+  state.tripTypes = data || [];
+  openModal('tripTypes');
 }
-async function deleteTripType(id, groupId){
+async function deleteTripType(id){
   await sb.from('trip_types').delete().eq('id', id);
   state.tripTypes = state.tripTypes.filter(t=>t.id!==id);
-  openModal('tripTypes', {groupId});
+  openModal('tripTypes');
 }
 
 // ---------- HAJIS ----------
@@ -1700,11 +1702,11 @@ const BULK_IMPORT_DEFS = {
   tripTypes: {
     table: 'trip_types',
     title: 'Bulk import trip types',
-    hint: 'One per line: <span class="mono">Trip name, Adult price, Child (5-9) price</span>',
+    hint: 'One per line: <span class="mono">Trip name, Adult price, Child (5-9) price</span><br/>Trip types are company-wide and apply to every group.',
     placeholder: 'Hira, 150, 75',
-    parse(line, groupId){
+    parse(line){
       const [name, price_adult, price_child] = parseCsvLine(line);
-      return name ? { group_id: groupId, name, price_adult: parseFloat(price_adult||'0'), price_child: parseFloat(price_child||'0') } : null;
+      return name ? { group_id: null, name, price_adult: parseFloat(price_adult||'0'), price_child: parseFloat(price_child||'0') } : null;
     }
   },
   packages: {
@@ -1727,7 +1729,7 @@ const BULK_IMPORT_ENTITY_LABELS = {
   tripTypes: 'Ziyarat trip types',
   packages: 'Packages'
 };
-const BULK_IMPORT_GROUP_SCOPED = new Set(['hajis','rooms','buses','tripTypes','packages']);
+const BULK_IMPORT_GROUP_SCOPED = new Set(['hajis','rooms','buses','packages']);
 
 function handleCsvFileUpload(input){
   const file = input.files?.[0];
@@ -1879,7 +1881,7 @@ async function bulkImportCSV(entity, groupId){
       const tripCache = new Map(state.tripTypes.map(t=>[t.name.toLowerCase(), t]));
       for(const p of parsed){
         if(!p._tripName || tripCache.has(p._tripName.toLowerCase())) continue;
-        const { data: newTrip, error: tripErr } = await sb.from('trip_types').insert({ group_id: groupId, name: p._tripName, price_adult:0, price_child:0 }).select().single();
+        const { data: newTrip, error: tripErr } = await sb.from('trip_types').insert({ group_id: null, name: p._tripName, price_adult:0, price_child:0 }).select().single();
         if(tripErr || !newTrip) continue;
         tripCache.set(p._tripName.toLowerCase(), newTrip);
         state.tripTypes.push(newTrip);
@@ -2143,9 +2145,10 @@ async function savePayment(e){
 }
 
 // ---------- TRIP PAYMENT COLLECTOR ----------
+// Ziyarat trips are priced and offered company-wide, so the collector searches pilgrims
+// across every group rather than locking to one.
 function openTripCollector(){
   state.tripCollector = {
-    groupId: state.activeGroupId || state.groups[0]?.id || null,
     selectedIds: [],
     perHaji: {},
     template: {},
@@ -2155,22 +2158,6 @@ function openTripCollector(){
   };
   state.view = 'tripCollector';
   state.mobileNavOpen = false;
-  render();
-}
-function collectorTripTypes(){
-  const gid = state.tripCollector?.groupId;
-  return state.tripTypes.filter(t=>t.group_id===gid);
-}
-function setCollectorGroup(groupId){
-  state.tripCollector = {
-    groupId,
-    selectedIds: [],
-    perHaji: {},
-    template: {},
-    method: state.tripCollector.method,
-    paidOn: state.tripCollector.paidOn,
-    reference: '',
-  };
   render();
 }
 function addHajiToCollector(hajiId){
@@ -2190,11 +2177,9 @@ function searchIndividualForCollector(){
   const q = (document.getElementById('collector-search').value||'').trim().toLowerCase();
   if(!q) return;
   const matches = state.hajis.filter(h=>
-    h.group_id===state.tripCollector.groupId && (
-      (h.full_name||'').toLowerCase().includes(q) ||
-      (h.passport_no||'').toLowerCase().includes(q) ||
-      (h.family_code||'').toLowerCase().includes(q)
-    )
+    (h.full_name||'').toLowerCase().includes(q) ||
+    (h.passport_no||'').toLowerCase().includes(q) ||
+    (h.family_code||'').toLowerCase().includes(q)
   );
   if(!matches.length){ showNotice('No matching customer found.', 'error'); return; }
   matches.forEach(h=>addHajiToCollector(h.id));
@@ -2257,37 +2242,22 @@ function tripCheckboxHtml(tripType, checked, onchangeExpr, category){
 function renderTripCollector(){
   const tc = state.tripCollector;
   if(!tc) return '';
-  const groupPickerHtml = `
-    <div class="field" style="margin-bottom:16px;max-width:340px;">
-      <label>Group</label>
-      ${customSelectHtml({
-        options: state.groups.map(g=>({value:g.id, label:g.name})),
-        value: tc.groupId,
-        placeholder: 'Select a group',
-        onChange: 'setCollectorGroup(this.value)'
-      })}
-    </div>
-  `;
-  if(!tc.groupId){
-    return groupPickerHtml + `<div class="empty"><h3>Select a group to begin</h3></div>`;
-  }
-  const groupTripTypes = collectorTripTypes();
-  if(!groupTripTypes.length){
-    return groupPickerHtml + `
+  if(!state.tripTypes.length){
+    return `
       <div class="toolbar">
-        <button class="ghost" onclick="openModal('tripTypes',{groupId:state.tripCollector.groupId})">Manage trip types</button>
+        <button class="ghost" onclick="openModal('tripTypes')">Manage trip types</button>
       </div>
       <div class="empty">
-        <h3>No trip types yet for this group</h3>
+        <h3>No trip types yet</h3>
         <p>Add ziyarat trips (e.g. Hira, Taif, Jeddah, Meeqat) with prices first.</p>
-        <button class="gold" style="margin-top:10px;" onclick="openModal('tripTypes',{groupId:state.tripCollector.groupId})">Manage trip types</button>
+        <button class="gold" style="margin-top:10px;" onclick="openModal('tripTypes')">Manage trip types</button>
       </div>
     `;
   }
   const eligibleIds = collectorEligibleIds();
-  return groupPickerHtml + `
+  return `
     <div class="toolbar">
-      <button class="ghost" onclick="openModal('tripTypes',{groupId:state.tripCollector.groupId})">Manage trip types</button>
+      <button class="ghost" onclick="openModal('tripTypes')">Manage trip types</button>
       <button class="ghost" onclick="openTripSummary()">Trip payment summary</button>
       <button class="ghost" onclick="openTripDateReport()">Date-wise collection</button>
     </div>
@@ -2299,7 +2269,7 @@ function renderTripCollector(){
           <label>Room</label>
           ${customSelectHtml({
             id: 'collector-room',
-            options: state.rooms.filter(r=>r.group_id===tc.groupId).map(r=>({value:r.id, label:`${r.room_number} (${titleCase(r.hotel_leg)})`})),
+            options: state.rooms.map(r=>({value:r.id, label:`${r.room_number} (${titleCase(r.hotel_leg)}) — ${groupById(r.group_id)?.name||'—'}`})),
             value: '', placeholder: 'Select room'
           })}
           <button class="ghost" style="width:100%;margin-top:8px;" onclick="addRoomToCollector()">Add Room</button>
@@ -2316,7 +2286,7 @@ function renderTripCollector(){
       <h3 style="margin-bottom:14px;">Selected customers</h3>
       <div class="collector-template">
         <strong style="font-size:11px;color:#6b6252;text-transform:uppercase;letter-spacing:.05em;">Trip template</strong>
-        ${groupTripTypes.map(t=>tripCheckboxHtml(t, !!tc.template[t.id], `toggleTemplateTrip('${t.id}',this.checked)`)).join('')}
+        ${state.tripTypes.map(t=>tripCheckboxHtml(t, !!tc.template[t.id], `toggleTemplateTrip('${t.id}',this.checked)`)).join('')}
       </div>
       <div class="toolbar">
         <button class="ghost" onclick="applyTripsToAll()">Apply trips to all</button>
@@ -2329,14 +2299,15 @@ function renderTripCollector(){
         const ph = tc.perHaji[id] || {foc:false, trips:{}};
         const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
         const category = ageCategory(h.age);
+        const grp = groupById(h.group_id);
         return `
           <div class="trip-row">
             <div class="who">
               <strong>${esc(h.full_name)}</strong>
-              <div style="font-size:11px;color:#8a8168;">${esc(h.passport_no||'—')}${room?` · Room ${esc(room.room_number)}`:''} · ${category}</div>
+              <div style="font-size:11px;color:#8a8168;">${grp?`${esc(grp.name)} · `:''}${esc(h.passport_no||'—')}${room?` · Room ${esc(room.room_number)}`:''} · ${category}</div>
             </div>
             <label class="trip-check"><input type="checkbox" ${ph.foc?'checked':''} onchange="toggleCollectorFOC('${id}',this.checked)"/> FOC</label>
-            ${groupTripTypes.map(t=>tripCheckboxHtml(t, !!ph.trips[t.id], `toggleCollectorTrip('${id}','${t.id}',this.checked)`, category)).join('')}
+            ${state.tripTypes.map(t=>tripCheckboxHtml(t, !!ph.trips[t.id], `toggleCollectorTrip('${id}','${t.id}',this.checked)`, category)).join('')}
             <span class="trip-total">${fmt(collectorLineTotal(id))}</span>
             <button class="danger" onclick="removeFromCollector('${id}')">Remove</button>
           </div>
@@ -2370,10 +2341,9 @@ async function saveTripPayments(){
   const tc = state.tripCollector;
   const eligibleIds = collectorEligibleIds();
   if(!eligibleIds.length){ showNotice('Select at least one trip (or mark FOC) for at least one customer.', 'error'); return; }
-  const groupTripTypes = collectorTripTypes();
   for(const hajiId of eligibleIds){
     const ph = tc.perHaji[hajiId];
-    const checkedTrips = groupTripTypes.filter(t=>ph.trips[t.id]);
+    const checkedTrips = state.tripTypes.filter(t=>ph.trips[t.id]);
     const amount = ph.foc ? 0 : checkedTrips.reduce((s,t)=>s+priceForHaji(t, hajiId),0);
     const { data: paymentRow, error } = await sb.from('payments').insert({
       haji_id: hajiId, amount,
@@ -2668,8 +2638,6 @@ async function deleteGroupPermanently(groupId){
   if(!group) return;
   const { error: hajiErr } = await sb.from('hajis').delete().eq('group_id', groupId);
   if(hajiErr){ showNotice(hajiErr.message, 'error'); return; }
-  const { error: tripErr } = await sb.from('trip_types').delete().eq('group_id', groupId);
-  if(tripErr){ showNotice(tripErr.message, 'error'); return; }
   const { error: groupErr } = await sb.from('groups').delete().eq('id', groupId);
   if(groupErr){ showNotice(groupErr.message, 'error'); return; }
   closeModal();
@@ -2687,11 +2655,13 @@ function toggleDeleteAllButton(){
 async function deleteEntireDatabase(){
   if(state.myRole!=='super_admin'){ showNotice('Only a Qibla Owner can do this.', 'error'); return; }
   if(!requireOnline()) return;
+  for(const trip of [...state.tripTypes]){
+    const { error: tripErr } = await sb.from('trip_types').delete().eq('id', trip.id);
+    if(tripErr){ showNotice(tripErr.message, 'error'); return; }
+  }
   for(const group of [...state.groups]){
     const { error: hajiErr } = await sb.from('hajis').delete().eq('group_id', group.id);
     if(hajiErr){ showNotice(hajiErr.message, 'error'); return; }
-    const { error: tripErr } = await sb.from('trip_types').delete().eq('group_id', group.id);
-    if(tripErr){ showNotice(tripErr.message, 'error'); return; }
     const { error: groupErr } = await sb.from('groups').delete().eq('id', group.id);
     if(groupErr){ showNotice(groupErr.message, 'error'); return; }
   }
@@ -2815,30 +2785,19 @@ function renderModal(){
       </div>
     `;
   } else if(type==='tripTypes'){
-    const gid = data?.groupId || state.activeGroupId || state.groups[0]?.id || '';
-    const groupTypes = state.tripTypes.filter(t=>t.group_id===gid);
     body = `
       <h3>Ziyarat trip types</h3>
-      <div class="field" style="margin-bottom:10px;">
-        <label>Group</label>
-        ${customSelectHtml({
-          options: state.groups.map(g=>({value:g.id, label:g.name})),
-          value: gid,
-          placeholder: 'Select a group',
-          onChange: "openModal('tripTypes',{groupId:this.value})"
-        })}
-      </div>
-      <p style="font-size:12px;color:#6b6252;">Priced trips for this group (e.g. Hira, Taif, Jeddah, Meeqat) used by the trip payment collector. Under 5s always ride free.</p>
+      <p style="font-size:12px;color:#6b6252;">Priced trips offered by Qibla for this Umrah period (e.g. Hira, Taif, Jeddah, Meeqat) — the same trips and prices apply to every group. Under 5s always ride free.</p>
       <div class="assign-list" style="margin:10px 0 14px;">
-        ${groupTypes.map(t=>`<div class="assign-row"><span>${esc(t.name)} — Adult ${fmt(t.price_adult)} · Child (5-9) ${fmt(t.price_child)} · Under 5 free</span><button id="del-trip-type-${t.id}" class="danger" onclick="withBusyButton('del-trip-type-${t.id}','Removing…',()=>deleteTripType('${t.id}','${gid}'))">Remove</button></div>`).join('') || '<div class="empty">No trip types yet</div>'}
+        ${state.tripTypes.map(t=>`<div class="assign-row"><span>${esc(t.name)} — Adult ${fmt(t.price_adult)} · Child (5-9) ${fmt(t.price_child)} · Under 5 free</span><button id="del-trip-type-${t.id}" class="danger" onclick="withBusyButton('del-trip-type-${t.id}','Removing…',()=>deleteTripType('${t.id}'))">Remove</button></div>`).join('') || '<div class="empty">No trip types yet</div>'}
       </div>
-      <div class="field"><input id="trip-type-name" placeholder="e.g. Hira" ${gid?'':'disabled'}/></div>
+      <div class="field"><input id="trip-type-name" placeholder="e.g. Hira"/></div>
       <div class="two-col">
-        <input id="trip-type-price-adult" type="number" step="0.01" placeholder="Adult price (MVR)" ${gid?'':'disabled'}/>
-        <input id="trip-type-price-child" type="number" step="0.01" placeholder="Child 5-9 price (MVR)" ${gid?'':'disabled'}/>
+        <input id="trip-type-price-adult" type="number" step="0.01" placeholder="Adult price (MVR)"/>
+        <input id="trip-type-price-child" type="number" step="0.01" placeholder="Child 5-9 price (MVR)"/>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
-        <button id="add-trip-type-btn" class="gold" style="flex:1" onclick="withBusyButton('add-trip-type-btn','Adding…',()=>addTripType('${gid}'))" ${gid?'':'disabled'}>Add trip type</button>
+        <button id="add-trip-type-btn" class="gold" style="flex:1" onclick="withBusyButton('add-trip-type-btn','Adding…',()=>addTripType())">Add trip type</button>
         <button class="ghost" onclick="closeModal()">Close</button>
       </div>
     `;
@@ -2927,7 +2886,7 @@ function renderModal(){
     const group = state.groups.find(g=>g.id===data.groupId);
     body = group ? `
       <h3 style="color:var(--danger);">Delete "${esc(group.name)}"?</h3>
-      <p style="font-size:13px;margin-bottom:12px;">This permanently deletes <strong>all hajis, rooms, buses, payments, trip types, and packages</strong> under this group. This cannot be undone.</p>
+      <p style="font-size:13px;margin-bottom:12px;">This permanently deletes <strong>all hajis, rooms, buses, payments, and packages</strong> under this group. Ziyarat trip types are company-wide and are not affected. This cannot be undone.</p>
       <div class="field">
         <label>Type the group name to confirm</label>
         <input id="delete-group-confirm-input" placeholder="${esc(group.name)}" oninput="toggleDeleteGroupButton('${group.id}')"/>
@@ -3047,7 +3006,6 @@ function renderModal(){
     `;
   } else if(type==='bus'){
     const busGroupId = data.group_id || state.activeGroupId || state.groups[0]?.id || '';
-    const busGroupTripTypes = state.tripTypes.filter(t=>t.group_id===busGroupId);
     body = `
       <h3>${data.id?'Edit bus':'Add bus'}</h3>
       <form onsubmit="saveBus(event, ${data.id?`'${data.id}'`:'null'})">
@@ -3056,8 +3014,7 @@ function renderModal(){
             name: 'group_id', required: true,
             options: state.groups.map(g=>({value:g.id, label:g.name})),
             value: busGroupId,
-            placeholder: 'Select a group',
-            onChange: data.id ? undefined : `openModal('bus',{...${JSON.stringify(data)}, group_id:this.value})`
+            placeholder: 'Select a group'
           })}
         </div>
         <div class="two-col">
@@ -3068,10 +3025,10 @@ function renderModal(){
           <label>Trip name</label>
           ${customSelectHtml({
             name: 'trip_type_id',
-            options: [{value:'',label:'— None —'}, ...busGroupTripTypes.map(t=>({value:t.id, label:t.name}))],
+            options: [{value:'',label:'— None —'}, ...state.tripTypes.map(t=>({value:t.id, label:t.name}))],
             value: data.trip_type_id||''
           })}
-          ${!busGroupTripTypes.length ? `<p style="font-size:11px;color:#8a8168;margin-top:4px;">No trip types yet for this group — add some via Manage trip types first.</p>` : ''}
+          ${!state.tripTypes.length ? `<p style="font-size:11px;color:#8a8168;margin-top:4px;">No trip types yet — add some via Manage trip types first.</p>` : ''}
         </div>
         <div class="field">
           <label>Main helper / Sheikh</label>
