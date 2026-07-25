@@ -19,6 +19,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
   :root{
     --ink:#1C2321;
@@ -2354,7 +2355,7 @@ function renderPayments(){
               <td data-label="Method" style="text-transform:capitalize;">${p.method.replace('_',' ')}</td>
               <td data-label="Date">${p.paid_on}</td>
               <td data-label="Reference">${esc(p.reference||'—')}</td>
-              <td class="row-actions"><button class="ghost" onclick="printReceipt('${p.id}')">Print receipt</button></td>
+              <td class="row-actions"><button class="ghost" onclick="printReceipt('${p.id}')">Print receipt</button><button class="ghost" onclick="shareReceipt('${p.id}')">Share receipt</button></td>
             </tr>`;
           }).join('') || `<tr><td colspan="7" class="empty">No payments recorded yet.</td></tr>`}
         </tbody>
@@ -2496,9 +2497,35 @@ function exportRowsToXlsx(filename, sheetName, aoa){
   XLSX.writeFile(wb, filename);
 }
 
-function printReceipt(paymentId){
+const RECEIPT_STYLE = `
+  body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:36px;background:#fff;}
+  h1{font-size:20px;margin-bottom:2px;color:#0E3B3A;}
+  .sub{color:#6b6252;font-size:12px;margin-bottom:24px;}
+  table{width:100%;border-collapse:collapse;margin-top:18px;}
+  td{padding:8px 0;border-bottom:1px solid #ddd;font-size:14px;}
+  td:first-child{color:#6b6252;}
+  td:last-child{text-align:right;font-weight:600;}
+  .total{font-size:16px;margin-top:16px;display:flex;justify-content:space-between;font-weight:700;}
+  .stamp{margin-top:60px;border-top:1px solid #999;width:200px;padding-top:6px;font-size:11px;color:#6b6252;}
+`;
+// Same rules as RECEIPT_STYLE, but scoped under .receipt-capture -- used when the receipt is
+// rendered into the live app document (for html2canvas) rather than an isolated print window,
+// so these generic selectors (h1, table, td…) can't leak onto the rest of the app.
+const RECEIPT_CAPTURE_STYLE = `
+  .receipt-capture{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:36px;background:#fff;}
+  .receipt-capture h1{font-size:20px;margin-bottom:2px;color:#0E3B3A;}
+  .receipt-capture .sub{color:#6b6252;font-size:12px;margin-bottom:24px;}
+  .receipt-capture table{width:100%;border-collapse:collapse;margin-top:18px;}
+  .receipt-capture td{padding:8px 0;border-bottom:1px solid #ddd;font-size:14px;}
+  .receipt-capture td:first-child{color:#6b6252;}
+  .receipt-capture td:last-child{text-align:right;font-weight:600;}
+  .receipt-capture .total{font-size:16px;margin-top:16px;display:flex;justify-content:space-between;font-weight:700;}
+  .receipt-capture .stamp{margin-top:60px;border-top:1px solid #999;width:200px;padding-top:6px;font-size:11px;color:#6b6252;}
+`;
+// Shared receipt markup used both by the print window and the share-as-image flow below.
+function receiptBodyHtml(paymentId){
   const p = state.payments.find(x=>x.id===paymentId);
-  if(!p) return;
+  if(!p) return null;
   const h = hajiById(p.haji_id);
   const g = h ? groupById(h.group_id) : null;
   const pkg = packageById(h?.package_id);
@@ -2506,39 +2533,77 @@ function printReceipt(paymentId){
   const paid = hajiPaid(h?.id);
   const balance = due - paid;
   const trips = tripsForPayment(p.id);
+  return `
+    <h1>Rihla — Payment Receipt</h1>
+    <div class="sub">${esc(g?.name||'')} · Issued ${new Date().toISOString().slice(0,10)}</div>
+    <table>
+      <tr><td>Pilgrim</td><td>${esc(h?.full_name||'—')}</td></tr>
+      <tr><td>Passport</td><td>${esc(h?.passport_no||'—')}</td></tr>
+      <tr><td>Package</td><td>${esc(pkg?.name||'—')}</td></tr>
+      ${trips.length?`<tr><td>Trips</td><td>${trips.map(t=>`${esc(t.trip_name)} (${fmt(t.price)})`).join(', ')}</td></tr>`:''}
+      <tr><td>Amount received</td><td>${fmt(p.amount)}</td></tr>
+      <tr><td>Method</td><td style="text-transform:capitalize;">${p.method.replace('_',' ')}</td></tr>
+      <tr><td>Date</td><td>${p.paid_on}</td></tr>
+      <tr><td>Reference</td><td>${esc(p.reference||'—')}</td></tr>
+    </table>
+    <div class="total"><span>Balance remaining</span><span>${fmt(balance)}</span></div>
+    <div class="stamp">Authorized signature</div>
+  `;
+}
+function printReceipt(paymentId){
+  const p = state.payments.find(x=>x.id===paymentId);
+  if(!p) return;
+  const h = hajiById(p.haji_id);
+  const bodyHtml = receiptBodyHtml(paymentId);
+  if(!bodyHtml) return;
   const w = window.open('', '_blank', 'width=500,height=700');
   w.document.write(`
     <html><head><title>Receipt — ${esc(h?.full_name||'')}</title>
-    <style>
-      body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:36px;}
-      h1{font-size:20px;margin-bottom:2px;color:#0E3B3A;}
-      .sub{color:#6b6252;font-size:12px;margin-bottom:24px;}
-      table{width:100%;border-collapse:collapse;margin-top:18px;}
-      td{padding:8px 0;border-bottom:1px solid #ddd;font-size:14px;}
-      td:first-child{color:#6b6252;}
-      td:last-child{text-align:right;font-weight:600;}
-      .total{font-size:16px;margin-top:16px;display:flex;justify-content:space-between;font-weight:700;}
-      .stamp{margin-top:60px;border-top:1px solid #999;width:200px;padding-top:6px;font-size:11px;color:#6b6252;}
-    </style></head>
+    <style>${RECEIPT_STYLE}</style></head>
     <body>
-      <h1>Rihla — Payment Receipt</h1>
-      <div class="sub">${esc(g?.name||'')} · Issued ${new Date().toISOString().slice(0,10)}</div>
-      <table>
-        <tr><td>Pilgrim</td><td>${esc(h?.full_name||'—')}</td></tr>
-        <tr><td>Passport</td><td>${esc(h?.passport_no||'—')}</td></tr>
-        <tr><td>Package</td><td>${esc(pkg?.name||'—')}</td></tr>
-        ${trips.length?`<tr><td>Trips</td><td>${trips.map(t=>`${esc(t.trip_name)} (${fmt(t.price)})`).join(', ')}</td></tr>`:''}
-        <tr><td>Amount received</td><td>${fmt(p.amount)}</td></tr>
-        <tr><td>Method</td><td style="text-transform:capitalize;">${p.method.replace('_',' ')}</td></tr>
-        <tr><td>Date</td><td>${p.paid_on}</td></tr>
-        <tr><td>Reference</td><td>${esc(p.reference||'—')}</td></tr>
-      </table>
-      <div class="total"><span>Balance remaining</span><span>${fmt(balance)}</span></div>
-      <div class="stamp">Authorized signature</div>
+      ${bodyHtml}
       <script>window.print();<\/script>
     </body></html>
   `);
   w.document.close();
+}
+// Renders the receipt to a PNG and hands it to the OS share sheet (WhatsApp, Viber, Messages, etc.)
+// via the Web Share API, so staff can send it straight to a customer's phone. Falls back to
+// downloading the image + opening a WhatsApp Web compose window on desktop browsers that can't share files.
+async function shareReceipt(paymentId){
+  const p = state.payments.find(x=>x.id===paymentId);
+  if(!p) return;
+  if(typeof html2canvas==='undefined'){ showNotice('The share tool failed to load. Check your connection and try again.', 'error'); return; }
+  const h = hajiById(p.haji_id);
+  const bodyHtml = receiptBodyHtml(paymentId);
+  if(!bodyHtml) return;
+  const shareText = `Payment receipt for ${h?.full_name||'pilgrim'} — ${fmt(p.amount)} received on ${p.paid_on}.`;
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:fixed;left:-9999px;top:0;width:420px;';
+  holder.innerHTML = `<style>${RECEIPT_CAPTURE_STYLE}</style><div class="receipt-capture">${bodyHtml}</div>`;
+  document.body.appendChild(holder);
+  try{
+    const canvas = await html2canvas(holder, { backgroundColor:'#ffffff', scale:2 });
+    const blob = await new Promise(res=>canvas.toBlob(res, 'image/png'));
+    const filename = `Receipt-${(h?.full_name||'pilgrim').replace(/\s+/g,'-')}.png`;
+    const file = blob ? new File([blob], filename, { type:'image/png' }) : null;
+    if(file && navigator.canShare && navigator.canShare({ files:[file] })){
+      await navigator.share({ files:[file], title:'Payment Receipt', text: shareText });
+    } else if(navigator.share){
+      await navigator.share({ title:'Payment Receipt', text: shareText });
+    } else if(blob){
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+      window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank');
+      showNotice('Receipt image downloaded — attach it in WhatsApp or Viber manually.', 'success');
+    }
+  } catch(err){
+    if(err?.name !== 'AbortError') showNotice('Could not share the receipt: ' + (err?.message || 'unknown error'), 'error');
+  } finally {
+    document.body.removeChild(holder);
+  }
 }
 
 async function savePayment(e){
