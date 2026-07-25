@@ -1420,7 +1420,7 @@ function render(){
   else if(state.view==='rooms') content.innerHTML = renderRooms();
   else if(state.view==='buses') content.innerHTML = renderBuses();
   else if(state.view==='payments') content.innerHTML = renderPayments();
-  else if(state.view==='tripCollector') content.innerHTML = renderTripCollector();
+  else if(state.view==='tripCollector') { content.innerHTML = renderTripCollector(); if(state.tripCollector?.searchQuery) filterCollectorHajisList(state.tripCollector.searchQuery); }
   else if(state.view==='tripSummary') content.innerHTML = renderTripSummary();
   else if(state.view==='tripDateReport') content.innerHTML = renderTripDateReport();
   else if(state.view==='staff') { content.innerHTML = renderStaff(); if(enteringStaffView && navigator.onLine) loadStaffList(); }
@@ -2428,6 +2428,7 @@ function openTripCollector(){
     method: 'cash',
     paidOn: new Date().toISOString().slice(0,10),
     reference: '',
+    searchQuery: '',
   };
   state.view = 'tripCollector';
   state.mobileNavOpen = false;
@@ -2454,17 +2455,24 @@ function addRoomToCollector(){
   roomOccupants(roomId).forEach(h=>addHajiToCollector(h.id));
   render();
 }
-function searchIndividualForCollector(){
-  const q = (document.getElementById('collector-search').value||'').trim().toLowerCase();
-  if(!q) return;
-  const matches = state.hajis.filter(h=>
-    (h.full_name||'').toLowerCase().includes(q) ||
-    (h.passport_no||'').toLowerCase().includes(q) ||
-    (h.family_code||'').toLowerCase().includes(q)
-  );
-  if(!matches.length){ showNotice('No matching customer found.', 'error'); return; }
-  matches.forEach(h=>addHajiToCollector(h.id));
-  render();
+// Toggling a checkbox in the searchable list is the direct way in or out of the collector --
+// no separate "search then add everyone that matched" step, and no scrolling down to a
+// different section to take someone back out.
+function toggleCollectorSelection(hajiId, checked){
+  if(checked){ addHajiToCollector(hajiId); render(); }
+  else { removeFromCollector(hajiId); }
+}
+function filterCollectorHajisList(query){
+  state.tripCollector.searchQuery = query;
+  const q = query.trim().toLowerCase();
+  let visibleCount = 0;
+  document.querySelectorAll('#collector-hajis-list .assign-row').forEach(row=>{
+    const match = !q || (row.dataset.search||'').includes(q);
+    row.style.display = match ? '' : 'none';
+    if(match) visibleCount++;
+  });
+  const noResults = document.getElementById('collector-hajis-no-results');
+  if(noResults) noResults.style.display = (q && visibleCount===0) ? '' : 'none';
 }
 function removeFromCollector(hajiId){
   const tc = state.tripCollector;
@@ -2545,9 +2553,9 @@ function renderTripCollector(){
 
     <div class="card" style="margin-bottom:16px;">
       <h3 style="margin-bottom:14px;">Find customers</h3>
-      <div class="three-col">
+      <div class="two-col" style="margin-bottom:14px;">
         <div>
-          <label>Group</label>
+          <label>Add whole group</label>
           ${customSelectHtml({
             id: 'collector-group',
             options: sortedGroupOptions(),
@@ -2556,7 +2564,7 @@ function renderTripCollector(){
           <button class="ghost" style="width:100%;margin-top:8px;" onclick="addGroupToCollector()">Add Group</button>
         </div>
         <div>
-          <label>Room</label>
+          <label>Add whole room</label>
           ${customSelectHtml({
             id: 'collector-room',
             options: state.rooms.map(r=>({value:r.id, label:`${r.room_number} (${titleCase(r.hotel_leg)}) — ${groupById(r.group_id)?.name||'—'}`})),
@@ -2564,11 +2572,22 @@ function renderTripCollector(){
           })}
           <button class="ghost" style="width:100%;margin-top:8px;" onclick="addRoomToCollector()">Add Room</button>
         </div>
-        <div>
-          <label>Individual</label>
-          <input id="collector-search" placeholder="Name, passport, or family code"/>
-          <button class="ghost" style="width:100%;margin-top:8px;" onclick="searchIndividualForCollector()">Search</button>
-        </div>
+      </div>
+      <label>Add or remove individually</label>
+      <input id="collector-search" placeholder="Search by name, passport, family code, group, or room…" value="${esc(tc.searchQuery||'')}" oninput="filterCollectorHajisList(this.value)" style="margin-bottom:8px;"/>
+      <div class="assign-list" id="collector-hajis-list" style="max-height:320px;overflow-y:auto;">
+        ${state.hajis.map(h=>{
+          const grp = groupById(h.group_id);
+          const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
+          const searchText = [h.full_name, h.passport_no, h.family_code, grp?.name, room?.room_number].filter(Boolean).join(' ').toLowerCase();
+          return `
+            <div class="assign-row" data-search="${esc(searchText)}">
+              <span>${esc(h.full_name)} ${grp?`<span style="color:#8a8168;">— ${esc(grp.name)}${room?` · Room ${esc(room.room_number)}`:''}</span>`:''}</span>
+              <input type="checkbox" style="width:auto;" ${tc.selectedIds.includes(h.id)?'checked':''} onchange="toggleCollectorSelection('${h.id}',this.checked)"/>
+            </div>
+          `;
+        }).join('') || '<div class="empty">No hajis yet</div>'}
+        <div id="collector-hajis-no-results" class="empty" style="display:none;">No matches found.</div>
       </div>
     </div>
 
@@ -2651,7 +2670,7 @@ async function saveTripPayments(){
     }
   }
   const count = eligibleIds.length;
-  state.tripCollector = { selectedIds: [], perHaji: {}, template: {}, method: tc.method, paidOn: tc.paidOn, reference: '' };
+  state.tripCollector = { selectedIds: [], perHaji: {}, template: {}, method: tc.method, paidOn: tc.paidOn, reference: '', searchQuery: '' };
   await loadGroupData();
   showNotice(`Saved payments for ${count} customer${count===1?'':'s'}.`, 'success');
   render();
