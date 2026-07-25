@@ -2442,18 +2442,21 @@ function addHajiToCollector(hajiId){
     tc.perHaji[hajiId] = { foc:false, trips:{} };
   }
 }
-function addGroupToCollector(){
-  const groupId = document.getElementById('collector-group').value;
+function addGroupToCollector(groupId){
   if(!groupId) return;
   const members = state.hajis.filter(h=>h.group_id===groupId);
   if(!members.length){ showNotice('That group has no hajis yet.', 'error'); return; }
   members.forEach(h=>addHajiToCollector(h.id));
+  showNotice(`Added ${members.length} customer${members.length===1?'':'s'} from ${esc(groupById(groupId)?.name||'group')}.`, 'success');
   render();
 }
-function addRoomToCollector(){
-  const roomId = document.getElementById('collector-room').value;
+function addRoomToCollector(roomId){
   if(!roomId) return;
-  roomOccupants(roomId).forEach(h=>addHajiToCollector(h.id));
+  const occupants = roomOccupants(roomId);
+  if(!occupants.length){ showNotice('That room has no one assigned yet.', 'error'); return; }
+  occupants.forEach(h=>addHajiToCollector(h.id));
+  const room = state.rooms.find(r=>r.id===roomId);
+  showNotice(`Added ${occupants.length} customer${occupants.length===1?'':'s'} from Room ${esc(room?.room_number||'')}.`, 'success');
   render();
 }
 // Toggling a checkbox in the searchable list is the direct way in or out of the collector --
@@ -2560,32 +2563,37 @@ function renderTripCollector(){
           ${customSelectHtml({
             id: 'collector-group',
             options: sortedGroupOptions(),
-            value: '', placeholder: 'Select group'
+            value: '', placeholder: 'Select a group to add everyone in it',
+            onChange: 'addGroupToCollector(this.value)'
           })}
-          <button class="ghost" style="width:100%;margin-top:8px;" onclick="addGroupToCollector()">Add Group</button>
         </div>
         <div>
           <label>Add whole room</label>
           ${customSelectHtml({
             id: 'collector-room',
             options: state.rooms.map(r=>({value:r.id, label:`${r.room_number} (${titleCase(r.hotel_leg)}) — ${groupById(r.group_id)?.name||'—'}`})),
-            value: '', placeholder: 'Select room'
+            value: '', placeholder: 'Select a room to add its occupants',
+            onChange: 'addRoomToCollector(this.value)'
           })}
-          <button class="ghost" style="width:100%;margin-top:8px;" onclick="addRoomToCollector()">Add Room</button>
         </div>
       </div>
       <details ${tc.customerListOpen?'open':''} ontoggle="state.tripCollector.customerListOpen=this.open">
-        <summary style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b6252;font-weight:600;cursor:pointer;">Add or remove individually</summary>
+        <summary style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b6252;font-weight:600;cursor:pointer;">Add or remove individually${tc.selectedIds.length?` <span class="badge-count">${tc.selectedIds.length} selected</span>`:''}</summary>
         <input id="collector-search" placeholder="Search by name, passport, family code, group, or room…" value="${esc(tc.searchQuery||'')}" oninput="filterCollectorHajisList(this.value)" style="margin-top:8px;margin-bottom:8px;"/>
         <div class="assign-list" id="collector-hajis-list" style="max-height:320px;overflow-y:auto;">
-          ${state.hajis.map(h=>{
+          ${[...state.hajis].sort((a,b)=>{
+            const aSel = tc.selectedIds.includes(a.id), bSel = tc.selectedIds.includes(b.id);
+            if(aSel!==bSel) return aSel ? -1 : 1;
+            return naturalCompare(a.full_name, b.full_name);
+          }).map(h=>{
             const grp = groupById(h.group_id);
             const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
             const searchText = [h.full_name, h.passport_no, h.family_code, grp?.name, room?.room_number].filter(Boolean).join(' ').toLowerCase();
+            const selected = tc.selectedIds.includes(h.id);
             return `
-              <div class="assign-row" data-search="${esc(searchText)}">
+              <div class="assign-row" data-search="${esc(searchText)}" style="${selected?'background:var(--sand-deep);':''}">
                 <span>${esc(h.full_name)} ${grp?`<span style="color:#8a8168;">— ${esc(grp.name)}${room?` · Room ${esc(room.room_number)}`:''}</span>`:''}</span>
-                <input type="checkbox" style="width:auto;" ${tc.selectedIds.includes(h.id)?'checked':''} onchange="toggleCollectorSelection('${h.id}',this.checked)"/>
+                <input type="checkbox" style="width:auto;" ${selected?'checked':''} onchange="toggleCollectorSelection('${h.id}',this.checked)"/>
               </div>
             `;
           }).join('') || '<div class="empty">No hajis yet</div>'}
