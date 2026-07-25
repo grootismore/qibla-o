@@ -915,6 +915,14 @@ function groupMonthKey(g){
   return g.departure_date ? g.departure_date.slice(0,7) : 'unscheduled';
 }
 function umrahMonthByKey(key){ return state.umrahMonths.find(m=>m.month_key===key); }
+// A date that reliably lands inside the given "YYYY-MM" month, so a newly-created group
+// buckets under it. Prefers the month's own scheduled start date when one is set.
+function dateForMonthKey(monthKey){
+  if(!monthKey) return null;
+  const schedule = umrahMonthByKey(monthKey);
+  if(schedule?.start_date) return schedule.start_date;
+  return /^\d{4}-\d{2}$/.test(monthKey) ? `${monthKey}-15` : null;
+}
 function groupMonthLabel(key){
   if(key==='unscheduled') return 'Unscheduled';
   const schedule = umrahMonthByKey(key);
@@ -2006,6 +2014,9 @@ async function bulkImportCSV(entity, groupId){
     return p && !p._groupName;
   });
 
+  const importMonthKey = document.getElementById('bulk-import-month')?.value || null;
+  const importDepartureDate = dateForMonthKey(importMonthKey);
+
   if(BULK_IMPORT_GROUP_SCOPED.has(entity) && !groupId && needsFallbackGroup){
     const typedName = document.getElementById('bulk-import-group-name')?.value.trim();
     const newGroupName = typedName || `Imported Group — ${new Date().toLocaleString()}`;
@@ -2013,7 +2024,7 @@ async function bulkImportCSV(entity, groupId){
     if(existingGroup){
       groupId = existingGroup.id;
     } else {
-      const { data: newGroup, error: groupErr } = await sb.from('groups').insert({name:newGroupName}).select().single();
+      const { data: newGroup, error: groupErr } = await sb.from('groups').insert({name:newGroupName, departure_date: importDepartureDate}).select().single();
       if(groupErr){ resetImportProgress(); showNotice(groupErr.message, 'error'); return; }
       groupId = newGroup.id;
       state.groups.push(newGroup);
@@ -2038,7 +2049,7 @@ async function bulkImportCSV(entity, groupId){
         if(!groupCache.has(key) && !missingGroupNames.has(key)) missingGroupNames.set(key, p._groupName);
       }
       if(missingGroupNames.size){
-        const { data: newGroups, error: gErr } = await sb.from('groups').insert([...missingGroupNames.values()].map(name=>({name}))).select();
+        const { data: newGroups, error: gErr } = await sb.from('groups').insert([...missingGroupNames.values()].map(name=>({name, departure_date: importDepartureDate}))).select();
         if(gErr){ resetImportProgress(); showNotice(gErr.message, 'error'); return; }
         for(const g of (newGroups||[])){ groupCache.set(g.name.toLowerCase(), g); state.groups.push(g); }
       }
@@ -2897,8 +2908,8 @@ async function deleteGroupPermanently(groupId){
   if(!requireOnline()) return;
   const group = state.groups.find(g=>g.id===groupId);
   if(!group) return;
-  const { error: hajiErr } = await sb.from('hajis').delete().eq('group_id', groupId);
-  if(hajiErr){ showNotice(hajiErr.message, 'error'); return; }
+  // Deleting the group cascades (at the DB level) to its hajis, rooms, buses, packages,
+  // and everything under those -- no need to delete them ourselves first.
   const { error: groupErr } = await sb.from('groups').delete().eq('id', groupId);
   if(groupErr){ showNotice(groupErr.message, 'error'); return; }
   closeModal();
@@ -2916,19 +2927,27 @@ function toggleDeleteAllButton(){
 async function deleteEntireDatabase(){
   if(state.myRole!=='super_admin'){ showNotice('Only a Qibla Owner can do this.', 'error'); return; }
   if(!requireOnline()) return;
-  for(const trip of [...state.tripTypes]){
-    const { error: tripErr } = await sb.from('trip_types').delete().eq('id', trip.id);
-    if(tripErr){ showNotice(tripErr.message, 'error'); return; }
+  // One batched delete per table instead of one round trip per row -- deleting groups
+  // cascades (at the DB level) to hajis, rooms, buses, packages, and everything under those.
+  const tripTypeIds = state.tripTypes.map(t=>t.id);
+  if(tripTypeIds.length){
+    const { error } = await sb.from('trip_types').delete().in('id', tripTypeIds);
+    if(error){ showNotice(error.message, 'error'); return; }
   }
-  for(const group of [...state.groups]){
-    const { error: hajiErr } = await sb.from('hajis').delete().eq('group_id', group.id);
-    if(hajiErr){ showNotice(hajiErr.message, 'error'); return; }
-    const { error: groupErr } = await sb.from('groups').delete().eq('id', group.id);
-    if(groupErr){ showNotice(groupErr.message, 'error'); return; }
+  const groupIds = state.groups.map(g=>g.id);
+  if(groupIds.length){
+    const { error } = await sb.from('groups').delete().in('id', groupIds);
+    if(error){ showNotice(error.message, 'error'); return; }
   }
-  for(const hotel of [...state.hotels]){
-    const { error: hotelErr } = await sb.from('hotels').delete().eq('id', hotel.id);
-    if(hotelErr){ showNotice(hotelErr.message, 'error'); return; }
+  const hotelIds = state.hotels.map(h=>h.id);
+  if(hotelIds.length){
+    const { error } = await sb.from('hotels').delete().in('id', hotelIds);
+    if(error){ showNotice(error.message, 'error'); return; }
+  }
+  const umrahMonthIds = state.umrahMonths.map(m=>m.id);
+  if(umrahMonthIds.length){
+    const { error } = await sb.from('umrah_months').delete().in('id', umrahMonthIds);
+    if(error){ showNotice(error.message, 'error'); return; }
   }
   closeModal();
   state.activeGroupId = null;
@@ -3185,8 +3204,8 @@ function renderModal(){
   } else if(type==='deleteAllConfirmStep1'){
     body = `
       <h3 style="color:var(--danger);">Wipe the entire database?</h3>
-      <p style="font-size:13px;margin-bottom:12px;">This permanently deletes <strong>every group and everything in them</strong> — all hajis, rooms, buses, payments, trip types, and packages — plus all hotels. Staff accounts and settings are kept. This cannot be undone and affects every user.</p>
-      <p style="font-size:13px;margin-bottom:12px;">Right now that's <strong>${state.groups.length} group${state.groups.length===1?'':'s'}</strong> and <strong>${state.hotels.length} hotel${state.hotels.length===1?'':'s'}</strong>.</p>
+      <p style="font-size:13px;margin-bottom:12px;">This permanently deletes <strong>every group and everything in them</strong> — all hajis, rooms, buses, payments, trip types, and packages — plus all hotels and Umrah month schedules. Staff accounts and settings are kept. This cannot be undone and affects every user.</p>
+      <p style="font-size:13px;margin-bottom:12px;">Right now that's <strong>${state.groups.length} group${state.groups.length===1?'':'s'}</strong>, <strong>${state.hotels.length} hotel${state.hotels.length===1?'':'s'}</strong>, and <strong>${state.umrahMonths.length} scheduled month${state.umrahMonths.length===1?'':'s'}</strong>.</p>
       <div style="display:flex;gap:8px;margin-top:16px;">
         <button class="danger" style="flex:1" onclick="openModal('deleteAllConfirmStep2')">I understand, continue</button>
         <button class="ghost" onclick="closeModal()">Cancel</button>
@@ -3210,6 +3229,7 @@ function renderModal(){
     const def = BULK_IMPORT_DEFS[entity];
     const needsGroup = BULK_IMPORT_GROUP_SCOPED.has(entity) && !data.groupId;
     const otherEntities = Object.entries(BULK_IMPORT_ENTITY_LABELS).filter(([k])=>k!==entity);
+    const monthOptions = [{value:'', label:'No month (leave unscheduled)'}, ...availableUmrahMonths().filter(k=>k!=='unscheduled').map(k=>({value:k, label:groupMonthLabel(k)}))];
     body = `
       <h3>${def.title}</h3>
       <p style="font-size:12px;color:#6b6252;">${def.hint}</p>
@@ -3218,6 +3238,16 @@ function renderModal(){
           <label>New group name (optional)</label>
           <p style="font-size:11px;color:#8a8168;margin-bottom:4px;">Leave blank and a group is created for you automatically.</p>
           <input id="bulk-import-group-name" placeholder="e.g. Batch 3 - September"/>
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <label>Which Umrah month is this for?</label>
+          <p style="font-size:11px;color:#8a8168;margin-bottom:4px;">Any group created by this import is placed in this month so it shows up under the right batch.</p>
+          ${customSelectHtml({
+            id: 'bulk-import-month',
+            options: monthOptions,
+            value: (state.selectedMonth && state.selectedMonth!=='all') ? state.selectedMonth : (currentRunningUmrahMonth()||''),
+            placeholder: 'No month (leave unscheduled)'
+          })}
         </div>
       ` : ''}
       <div class="field" style="margin-top:14px;">
