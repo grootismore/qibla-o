@@ -86,6 +86,10 @@
   .stat-label{font-size:11px;text-transform:uppercase;color:#6b6252;letter-spacing:.05em;font-weight:600;}
   .stat-value{font-family:'Fraunces',serif;font-size:28px;color:var(--teal);margin-top:4px;}
   .row-actions{display:flex;gap:6px;}
+  .stat-icon-badge{width:38px;height:38px;border-radius:50%;background:var(--gold-soft);color:var(--gold);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .friendly-card{background:#fffdf7;border:1px solid var(--line);border-radius:var(--radius);padding:16px;display:flex;align-items:center;gap:12px;}
+  .dash-greeting{font-family:'Fraunces',serif;font-weight:600;color:var(--teal);font-size:22px;margin-bottom:2px;}
+  .dash-sub{color:#6b6252;font-size:13px;}
   #progress-bar{position:fixed;top:0;left:0;right:0;height:3px;z-index:500;overflow:hidden;opacity:0;transition:opacity .2s ease;pointer-events:none;}
   #progress-bar.active{opacity:1;}
   #progress-bar .bar{position:absolute;top:0;left:0;height:100%;width:40%;background:var(--gold);animation:progress-slide 1.1s ease-in-out infinite;}
@@ -364,6 +368,7 @@ let state = {
   view: 'dashboard',
   groups: [],
   activeGroupId: null,
+  selectedMonth: null,
   packages: [],
   hajis: [],
   rooms: [],
@@ -406,12 +411,13 @@ let pendingRestoredView = null;
 try {
   pendingRestoredView = JSON.parse(localStorage.getItem(VIEW_STATE_KEY)||'null');
   if(pendingRestoredView?.activeGroupId) state.activeGroupId = pendingRestoredView.activeGroupId;
+  if(pendingRestoredView?.selectedMonth) state.selectedMonth = pendingRestoredView.selectedMonth;
 } catch(e){ pendingRestoredView = null; }
 
 function persistViewState(){
   try{
     const persistedView = ['tripSummary','tripDateReport'].includes(state.view) ? 'tripCollector' : state.view;
-    localStorage.setItem(VIEW_STATE_KEY, JSON.stringify({ view: persistedView, activeGroupId: state.activeGroupId }));
+    localStorage.setItem(VIEW_STATE_KEY, JSON.stringify({ view: persistedView, activeGroupId: state.activeGroupId, selectedMonth: state.selectedMonth }));
   }catch(e){}
 }
 
@@ -722,6 +728,7 @@ async function loadAll(){
   ]);
   state.groups = groups || [];
   if(!state.activeGroupId && state.groups.length) state.activeGroupId = state.groups[0].id;
+  if(!state.selectedMonth) state.selectedMonth = currentRunningUmrahMonth() || 'all';
   state.hotels = hotels || [];
   state.roleSettings = roleSettings || [];
   state.staffList = staffList || [];
@@ -858,19 +865,90 @@ async function assignFamilyToBus(busId, familyCode){
   showNotice(`Assigned all ${toAssign.length} family member${toAssign.length===1?'':'s'} to Bus ${bus.bus_number}.`, 'success');
 }
 function groupById(id){ return state.groups.find(g=>g.id===id); }
+function naturalCompare(a,b){
+  return String(a||'').localeCompare(String(b||''), undefined, {numeric:true, sensitivity:'base'});
+}
+function sortedGroupOptions(){
+  return [...state.groups].sort((a,b)=>naturalCompare(a.name,b.name)).map(g=>({value:g.id, label:g.name}));
+}
+function calcAge(dobIso){
+  if(!dobIso) return null;
+  const [y,m,d] = dobIso.split('-').map(Number);
+  if(!y||!m||!d) return null;
+  const today = new Date();
+  let age = today.getFullYear() - y;
+  const hadBirthdayThisYear = (today.getMonth()+1 > m) || (today.getMonth()+1===m && today.getDate() >= d);
+  if(!hadBirthdayThisYear) age--;
+  return age >= 0 ? age : null;
+}
+function updateAgePreview(dobIso){
+  const el = document.getElementById('haji-age-preview');
+  if(!el) return;
+  const age = calcAge(dobIso);
+  el.textContent = age!=null ? `Age: ${age}` : '';
+}
 function hajiSummaryLine(h, maps){
   const room = maps ? (maps.rooms.get(`${h.id}|mecca`) || maps.rooms.get(`${h.id}|madinah`)) : (hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah'));
   const bus = maps ? maps.buses.get(h.id) : hajiBus(h.id);
   const parts = [];
   const grp = groupById(h.group_id);
   if(grp) parts.push(esc(grp.name));
-  if(h.group_number) parts.push(esc(h.group_number));
   if(room) parts.push(`Room ${esc(room.room_number)}`);
   if(bus){
     const tripLabel = busTripLabel(bus);
     parts.push(`Bus ${esc(bus.bus_number)}${tripLabel?` (${esc(tripLabel)})`:''}`);
   }
   return parts.join(' • ') || 'No group, room, or bus assigned yet';
+}
+// ---------- UMRAH MONTH SELECTOR ----------
+// Qibla runs multiple Umrah batches across a season; staff pick which month's groups they're
+// looking at, defaulting to whichever month is currently running.
+function groupMonthKey(g){
+  return g.departure_date ? g.departure_date.slice(0,7) : 'unscheduled';
+}
+function groupMonthLabel(key){
+  if(key==='unscheduled') return 'Unscheduled';
+  const [y,m] = key.split('-').map(Number);
+  if(!y||!m) return key;
+  return new Date(y, m-1, 1).toLocaleDateString(undefined, {year:'numeric', month:'long'});
+}
+function availableUmrahMonths(){
+  const keys = new Set(state.groups.map(groupMonthKey));
+  return [...keys].sort((a,b)=>{
+    if(a==='unscheduled') return 1;
+    if(b==='unscheduled') return -1;
+    return a.localeCompare(b);
+  });
+}
+function currentRunningUmrahMonth(){
+  const months = availableUmrahMonths().filter(k=>k!=='unscheduled');
+  if(!months.length) return null;
+  const todayKey = new Date().toISOString().slice(0,7);
+  if(months.includes(todayKey)) return todayKey;
+  const upcoming = months.filter(k=>k>=todayKey).sort();
+  if(upcoming.length) return upcoming[0];
+  return months[months.length-1];
+}
+function groupsInSelectedMonth(){
+  if(!state.selectedMonth || state.selectedMonth==='all') return state.groups;
+  return state.groups.filter(g=>groupMonthKey(g)===state.selectedMonth);
+}
+function sumCountsForGroups(countMap, groups){
+  return groups.reduce((s,g)=>s+(countMap.get(g.id)||0),0);
+}
+function selectUmrahMonth(key){
+  state.selectedMonth = key;
+  render();
+}
+function monthSelectorHtml(){
+  const months = availableUmrahMonths();
+  const options = [{value:'all', label:'All months'}, ...months.map(k=>({value:k, label:groupMonthLabel(k)}))];
+  return customSelectHtml({
+    id: 'umrah-month-select',
+    options,
+    value: state.selectedMonth || 'all',
+    onChange: 'selectUmrahMonth(this.value)'
+  });
 }
 function groupSummaryLine(g){
   const parts = [];
@@ -1356,33 +1434,49 @@ function renderHajiDashboard(){
 
 // ---------- DASHBOARD ----------
 function renderDashboard(){
-  const totalHajisAll = [...state.groupHajiCounts.values()].reduce((s,n)=>s+n, 0);
-  const totalRoomsAll = [...state.groupRoomCounts.values()].reduce((s,n)=>s+n, 0);
-  const totalBusesAll = [...state.groupBusCounts.values()].reduce((s,n)=>s+n, 0);
-  const overviewHtml = `
-    <div class="card" style="margin-bottom:16px;">
-      <div class="stat-label" style="margin-bottom:10px;">All groups (company-wide)</div>
-      <div class="grid grid-4">
-        <div><div class="stat-label">Groups</div><div class="stat-value">${state.groups.length}</div></div>
-        <div><div class="stat-label">Hajjis</div><div class="stat-value">${totalHajisAll}</div></div>
-        <div><div class="stat-label">Rooms booked</div><div class="stat-value">${totalRoomsAll}</div></div>
-        <div><div class="stat-label">Buses booked</div><div class="stat-value">${totalBusesAll}</div></div>
+  const monthGroups = groupsInSelectedMonth();
+  const monthGids = new Set(monthGroups.map(g=>g.id));
+  const monthLabel = (state.selectedMonth && state.selectedMonth!=='all') ? groupMonthLabel(state.selectedMonth) : 'every month';
+
+  const headerHtml = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:14px;margin-bottom:18px;">
+      <div>
+        <div class="dash-greeting">Welcome back</div>
+        <div class="dash-sub">Here's how ${esc(monthLabel)} is looking, at a glance.</div>
       </div>
+      <div style="min-width:220px;">${monthSelectorHtml()}</div>
     </div>
   `;
-  if(!state.groups.length) return overviewHtml + `<div class="empty"><h3>No groups yet</h3><p>Create a group to get started.</p></div>`;
-  const total = state.hajis.length;
-  const totalDue = state.hajis.reduce((s,h)=>{ const pkg=packageById(h.package_id); return s+(pkg?Number(pkg.price):0); },0);
-  const totalCollected = state.payments.reduce((s,p)=>s+Number(p.amount),0);
-  const roomsAssigned = new Set(state.roomAssignments.map(a=>a.haji_id)).size;
-  const busesById = new Map(state.buses.map(b=>[b.id, b]));
-  const busAssignedM = new Set(state.busAssignments.filter(a=>busesById.get(a.bus_id)?.leg==='mecca_madinah').map(a=>a.haji_id)).size;
-  const paidMap = hajiPaidMap();
-  const unpaidCount = state.hajis.filter(h=>{ const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; return (paidMap.get(h.id)||0) < due; }).length;
 
-  return overviewHtml + `
-    <h2 style="margin-bottom:4px;">All hajjis, every group</h2>
-    <p style="color:#6b6252;margin-bottom:20px;">Combined totals across all ${state.groups.length} group${state.groups.length===1?'':'s'} · see Groups for the per-group breakdown.</p>
+  const monthRooms = state.rooms.filter(r=>monthGids.has(r.group_id));
+  const monthBuses = state.buses.filter(b=>monthGids.has(b.group_id));
+  const overviewHtml = `
+    <div class="grid grid-4" style="margin-bottom:20px;">
+      <div class="friendly-card"><div class="stat-icon-badge">${icon('groups',20)}</div><div><div class="stat-label">Groups</div><div class="stat-value">${monthGroups.length}</div></div></div>
+      <div class="friendly-card"><div class="stat-icon-badge">${icon('hajis',20)}</div><div><div class="stat-label">Hajjis</div><div class="stat-value">${sumCountsForGroups(state.groupHajiCounts, monthGroups)}</div></div></div>
+      <div class="friendly-card"><div class="stat-icon-badge">${icon('rooms',20)}</div><div><div class="stat-label">Rooms booked</div><div class="stat-value">${monthRooms.length}</div></div></div>
+      <div class="friendly-card"><div class="stat-icon-badge">${icon('buses',20)}</div><div><div class="stat-label">Buses booked</div><div class="stat-value">${monthBuses.length}</div></div></div>
+    </div>
+  `;
+  if(!state.groups.length) return headerHtml + `<div class="empty"><h3>No groups yet</h3><p>Create a group to get started.</p></div>`;
+  if(!monthGroups.length) return headerHtml + overviewHtml + `<div class="empty"><h3>No groups in ${esc(monthLabel)}</h3><p>Try a different month, or check All months.</p></div>`;
+
+  const monthHajis = state.hajis.filter(h=>monthGids.has(h.group_id));
+  const monthHajiIds = new Set(monthHajis.map(h=>h.id));
+  const monthPayments = state.payments.filter(p=>monthHajiIds.has(p.haji_id));
+  const total = monthHajis.length;
+  const totalDue = monthHajis.reduce((s,h)=>{ const pkg=packageById(h.package_id); return s+(pkg?Number(pkg.price):0); },0);
+  const totalCollected = monthPayments.reduce((s,p)=>s+Number(p.amount),0);
+  const roomsAssigned = new Set(state.roomAssignments.filter(a=>monthHajiIds.has(a.haji_id)).map(a=>a.haji_id)).size;
+  const busesById = new Map(state.buses.map(b=>[b.id, b]));
+  const busAssignedM = new Set(state.busAssignments.filter(a=>monthHajiIds.has(a.haji_id) && busesById.get(a.bus_id)?.leg==='mecca_madinah').map(a=>a.haji_id)).size;
+  const monthPaidMap = new Map();
+  monthPayments.forEach(p=>monthPaidMap.set(p.haji_id, (monthPaidMap.get(p.haji_id)||0) + Number(p.amount)));
+  const unpaidCount = monthHajis.filter(h=>{ const pkg=packageById(h.package_id); const due=pkg?Number(pkg.price):0; return (monthPaidMap.get(h.id)||0) < due; }).length;
+
+  return headerHtml + overviewHtml + `
+    <h2 style="margin-bottom:4px;">Pilgrims travelling in ${esc(monthLabel)}</h2>
+    <p style="color:#6b6252;margin-bottom:20px;">Combined totals across ${monthGroups.length} group${monthGroups.length===1?'':'s'} · see Groups for the per-group breakdown.</p>
     <div class="grid grid-4">
       <div class="card"><div class="stat-label">Total hajis</div><div class="stat-value">${total}</div></div>
       <div class="card"><div class="stat-label">Rooms assigned</div><div class="stat-value">${roomsAssigned}/${total}</div></div>
@@ -1405,16 +1499,19 @@ function renderDashboard(){
 
 // ---------- GROUPS ----------
 function renderGroups(){
-  const totalHajis = [...state.groupHajiCounts.values()].reduce((s,n)=>s+n, 0);
-  const totalRooms = [...state.groupRoomCounts.values()].reduce((s,n)=>s+n, 0);
-  const totalBuses = [...state.groupBusCounts.values()].reduce((s,n)=>s+n, 0);
-  const sortedGroups = [...state.groups].sort((a,b)=>(state.groupHajiCounts.get(b.id)||0)-(state.groupHajiCounts.get(a.id)||0));
+  const monthGroups = groupsInSelectedMonth();
+  const monthRooms = state.rooms.filter(r=>monthGroups.some(g=>g.id===r.group_id)).length;
+  const monthBuses = state.buses.filter(b=>monthGroups.some(g=>g.id===b.group_id)).length;
+  const sortedGroups = [...monthGroups].sort((a,b)=>(state.groupHajiCounts.get(b.id)||0)-(state.groupHajiCounts.get(a.id)||0));
   return `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
+      <div style="min-width:220px;">${monthSelectorHtml()}</div>
+    </div>
     <div class="grid grid-4" style="margin-bottom:16px;">
-      <div class="card"><div class="stat-label">Groups</div><div class="stat-value">${state.groups.length}</div></div>
-      <div class="card"><div class="stat-label">Total hajjis</div><div class="stat-value">${totalHajis}</div></div>
-      <div class="card"><div class="stat-label">Rooms booked</div><div class="stat-value">${totalRooms}</div></div>
-      <div class="card"><div class="stat-label">Buses booked</div><div class="stat-value">${totalBuses}</div></div>
+      <div class="card"><div class="stat-label">Groups</div><div class="stat-value">${monthGroups.length}</div></div>
+      <div class="card"><div class="stat-label">Total hajjis</div><div class="stat-value">${sumCountsForGroups(state.groupHajiCounts, monthGroups)}</div></div>
+      <div class="card"><div class="stat-label">Rooms booked</div><div class="stat-value">${monthRooms}</div></div>
+      <div class="card"><div class="stat-label">Buses booked</div><div class="stat-value">${monthBuses}</div></div>
     </div>
     <div class="toolbar">
       ${can('manageGroups') ? `<button class="primary" onclick="openModal('group')">+ New group</button>
@@ -1429,7 +1526,7 @@ function renderGroups(){
           </div>
           <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
         </div>
-      `).join('') || `<div class="empty">No groups yet — create your first Umrah batch.</div>`}
+      `).join('') || (state.groups.length ? `<div class="empty">No groups in this month — try All months.</div>` : `<div class="empty">No groups yet — create your first Umrah batch.</div>`)}
     </div>
   `;
 }
@@ -1592,22 +1689,29 @@ async function saveHaji(e, id){
   e.preventDefault();
   if(!requireOnline()) return;
   const f = e.target;
+  const dob = f.date_of_birth.value || null;
   const payload = {
     group_id: f.group_id.value,
     full_name: f.full_name.value,
     passport_no: f.passport_no.value,
     phone: f.phone.value,
     gender: f.gender.value,
-    age: f.age.value === '' ? null : parseInt(f.age.value, 10),
+    date_of_birth: dob,
+    age: dob ? calcAge(dob) : (id ? undefined : null),
     is_elderly: f.is_elderly.checked,
     needs_wheelchair: f.needs_wheelchair.checked,
     family_code: f.family_code.value,
     flight_number: f.flight_number.value || null,
-    group_number: f.group_number.value || null,
-    q_number: f.q_number.value || null,
+    q_number: id ? (f.q_number.value || null) : undefined,
     package_id: f.package_id.value || null,
     notes: f.notes.value
   };
+  if(payload.age===undefined) delete payload.age;
+  if(payload.q_number===undefined){
+    const { data: qNum, error: qErr } = await sb.rpc('next_q_number');
+    if(qErr){ showNotice(`Could not assign a queue number: ${qErr.message}`, 'error'); return; }
+    payload.q_number = qNum;
+  }
   let hajiId = id;
   if(id) await sb.from('hajis').update(payload).eq('id', id);
   else {
@@ -1645,7 +1749,7 @@ const BULK_IMPORT_DEFS = {
   hajis: {
     table: 'hajis',
     title: 'Bulk import hajis',
-    hint: 'One per line: <span class="mono">Full name, Group No, Room No, Q No, Flight No</span><br/>Group No and Room No are auto-created if they don\'t exist yet. Optionally add more columns after Flight No: <span class="mono">Package, Passport no, Phone, Gender, Family code, Age, Elderly (y/n), Wheelchair (y/n), Notes</span>.',
+    hint: 'One per line: <span class="mono">Full name, Group No, Room No, Q No, Flight No</span><br/>Group No and Room No are auto-created if they don\'t exist yet. Leave Q No blank to have one assigned automatically. Optionally add more columns after Flight No: <span class="mono">Package, Passport no, Phone, Gender, Family code, Age, Elderly (y/n), Wheelchair (y/n), Notes</span>.',
     placeholder: 'Ameen Mohamed, G03, 0101, Q046, FL01',
     parse(line, groupId){
       const [full_name, group_no, room_number, q_number, flight_number, package_name, passport_no, phone, gender, family_code, age, elderly, wheelchair, notes] = parseCsvLine(line);
@@ -1654,7 +1758,7 @@ const BULK_IMPORT_DEFS = {
       return {
         group_id: groupId, full_name, passport_no: passport_no||'', phone: phone||'',
         gender: (gender||'').toLowerCase()==='female'?'female':'male', family_code: family_code||'',
-        flight_number: flight_number?.trim() || null, group_number: group_no?.trim() || null, q_number: q_number?.trim() || null,
+        flight_number: flight_number?.trim() || null, q_number: q_number?.trim() || null,
         age: age?.trim() ? (parseInt(age,10)||null) : null,
         is_elderly: isYes(elderly), needs_wheelchair: isYes(wheelchair),
         notes: notes||'',
@@ -1863,6 +1967,13 @@ async function bulkImportCSV(entity, groupId){
         group_id: p._resolvedGroupId,
         package_id: p._packageName && p._resolvedGroupId ? (packageCache.get(`${p._resolvedGroupId}|${p._packageName.toLowerCase()}`)?.id||null) : null
       }));
+      const missingQCount = rows.filter(r=>!r.q_number).length;
+      if(missingQCount){
+        const { data: newQNumbers, error: qErr } = await sb.rpc('next_q_numbers', { n: missingQCount });
+        if(qErr){ resetImportProgress(); showNotice(`Could not assign queue numbers: ${qErr.message}`, 'error'); return; }
+        let qi = 0;
+        for(const r of rows){ if(!r.q_number) r.q_number = newQNumbers[qi++]; }
+      }
       const { data, error } = await sb.from(def.table).insert(rows).select();
       if(error){ resetImportProgress(); showNotice(error.message, 'error'); return; }
 
@@ -2608,7 +2719,7 @@ function renderSettings(){
         <label>Group to delete</label>
         ${customSelectHtml({
           id: 'danger-zone-group',
-          options: state.groups.map(g=>({value:g.id, label:g.name})),
+          options: sortedGroupOptions(),
           placeholder: state.groups.length ? 'Select a group' : 'No groups yet'
         })}
       </div>
@@ -2819,13 +2930,13 @@ function renderModal(){
         ${detailRow('Passport', esc(h.passport_no||'—'))}
         ${detailRow('Phone', esc(h.phone||'—'))}
         ${detailRow('Gender', titleCase(h.gender)||'—')}
-        ${detailRow('Age', h.age??'—')}
+        ${detailRow('Date of birth', h.date_of_birth ? formatDateDisplay(h.date_of_birth) : '—')}
+        ${detailRow('Age', (calcAge(h.date_of_birth) ?? h.age) ?? '—')}
         ${detailRow('Package', pkg?esc(pkg.name):'—')}
         ${detailRow('Balance', `<span class="pill ${bal<=0?'ok':'bad'}">${fmt(bal)}</span>`)}
         ${detailRow('Family code', esc(h.family_code||'—'))}
         ${detailRow('Flight number', esc(h.flight_number||'—'))}
         ${detailRow('Q number', esc(h.q_number||'—'))}
-        ${detailRow('Group number', esc(h.group_number||'—'))}
         ${detailRow('Room', room?`${esc(room.room_number)} (${titleCase(room.hotel_leg)})`:'—')}
         ${detailRow('Bus', bus?`${esc(bus.bus_number)} (${titleCase(bus.leg.replace(/_/g,' '))}${busTripLabel(bus)?` · ${esc(busTripLabel(bus))}`:''})`:'—')}
         ${detailRow('Notes', esc(h.notes||'—'))}
@@ -2836,13 +2947,14 @@ function renderModal(){
       </div>
     `;
   } else if(type==='haji'){
+    const currentAge = calcAge(data.date_of_birth) ?? data.age ?? null;
     body = `
       <h3>${data.id?'Edit haji':'Add haji'}</h3>
       <form onsubmit="saveHaji(event, ${data.id?`'${data.id}'`:'null'})">
         <div class="field"><label>Group</label>
           ${customSelectHtml({
             name: 'group_id', required: true,
-            options: state.groups.map(g=>({value:g.id, label:g.name})),
+            options: sortedGroupOptions(),
             value: data.group_id || state.activeGroupId || state.groups[0]?.id || '',
             placeholder: 'Select a group'
           })}
@@ -2856,7 +2968,11 @@ function renderModal(){
           <div class="field"><label>Gender</label>
             ${customSelectHtml({ name:'gender', options:[{value:'male',label:'Male'},{value:'female',label:'Female'}], value:data.gender, searchable:false })}
           </div>
-          <div class="field"><label>Age</label><input type="number" min="0" max="120" name="age" value="${data.age??''}" placeholder="e.g. 34"/></div>
+          <div class="field">
+            <label>Date of birth</label>
+            ${customDateHtml({ name:'date_of_birth', value: data.date_of_birth||'', placeholder:'Select date of birth', onChange:'updateAgePreview(this.value)' })}
+            <p id="haji-age-preview" style="font-size:12px;color:#8a8168;margin-top:4px;">${currentAge!=null?`Age: ${currentAge}`:''}</p>
+          </div>
         </div>
         <div class="field"><label>Package</label>
           ${customSelectHtml({
@@ -2868,9 +2984,13 @@ function renderModal(){
         <div class="field"><label>Family code (group family members together)</label><input name="family_code" value="${esc(data.family_code||'')}"/></div>
         <div class="two-col">
           <div class="field"><label>Flight number</label><input name="flight_number" value="${esc(data.flight_number||'')}" placeholder="e.g. EK625"/></div>
-          <div class="field"><label>Q number</label><input name="q_number" value="${esc(data.q_number||'')}" placeholder="Ministry queue no."/></div>
+          <div class="field"><label>Q number</label>
+            ${data.id
+              ? `<input name="q_number" value="${esc(data.q_number||'')}" placeholder="Ministry queue no."/>`
+              : `<p style="font-size:13px;color:#8a8168;padding:9px 0;">Assigned automatically when saved</p>`
+            }
+          </div>
         </div>
-        <div class="field"><label>Group number</label><input name="group_number" value="${esc(data.group_number||'')}" placeholder="Sub-group / mushrif no."/></div>
         <div class="two-col">
           <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;"><input type="checkbox" name="is_elderly" style="width:auto;" ${data.is_elderly?'checked':''}/> Elderly</label>
           <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;"><input type="checkbox" name="needs_wheelchair" style="width:auto;" ${data.needs_wheelchair?'checked':''}/> Needs wheelchair</label>
@@ -2970,7 +3090,7 @@ function renderModal(){
         <div class="field"><label>Group</label>
           ${customSelectHtml({
             name: 'group_id', required: true,
-            options: state.groups.map(g=>({value:g.id, label:g.name})),
+            options: sortedGroupOptions(),
             value: data.group_id || state.activeGroupId || state.groups[0]?.id || '',
             placeholder: 'Select a group'
           })}
@@ -3012,7 +3132,7 @@ function renderModal(){
         <div class="field"><label>Group</label>
           ${customSelectHtml({
             name: 'group_id', required: true,
-            options: state.groups.map(g=>({value:g.id, label:g.name})),
+            options: sortedGroupOptions(),
             value: busGroupId,
             placeholder: 'Select a group'
           })}
