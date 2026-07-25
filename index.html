@@ -18,6 +18,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{
     --ink:#1C2321;
@@ -427,7 +428,9 @@ try {
 
 function persistViewState(){
   try{
-    const persistedView = ['tripSummary','tripDateReport'].includes(state.view) ? 'tripCollector' : state.view;
+    const persistedView = ['tripSummary','tripDateReport'].includes(state.view) ? 'tripCollector'
+      : state.view==='todaySalesSummary' ? 'payments'
+      : state.view;
     localStorage.setItem(VIEW_STATE_KEY, JSON.stringify({ view: persistedView, activeGroupId: state.activeGroupId, selectedMonth: state.selectedMonth }));
   }catch(e){}
 }
@@ -622,7 +625,7 @@ const NAV_ITEM_DEFS = [
   { key:'hajis', label:'Hajis', activeViews:['hajis'], onclick:"setView('hajis')", permitted: (role)=>canRole('manageHajis',role)||role==='accountant' },
   { key:'rooms', label:'Rooms', activeViews:['rooms'], onclick:"setView('rooms')", permitted: (role)=>canRole('manageRooms',role) },
   { key:'buses', label:'Buses', activeViews:['buses'], onclick:"setView('buses')", permitted: (role)=>canRole('manageBuses',role) },
-  { key:'payments', label:'Payments', activeViews:['payments'], onclick:"setView('payments')", permitted: (role)=>canRole('managePayments',role)||role==='admin' },
+  { key:'payments', label:'Payments', activeViews:['payments','todaySalesSummary'], onclick:"setView('payments')", permitted: (role)=>canRole('managePayments',role)||role==='admin' },
   { key:'tripPayments', label:'Trip Payments', activeViews:['tripCollector','tripSummary','tripDateReport'], onclick:"openTripCollector()", permitted: (role)=>canRole('managePayments',role)||role==='admin' },
   { key:'staff', label:'Staff', activeViews:['staff'], onclick:"setView('staff')", permitted: (role)=>canRole('manageStaff',role) },
 ];
@@ -1423,6 +1426,7 @@ function render(){
   else if(state.view==='tripCollector') { content.innerHTML = renderTripCollector(); if(state.tripCollector?.searchQuery) filterCollectorHajisList(state.tripCollector.searchQuery); }
   else if(state.view==='tripSummary') content.innerHTML = renderTripSummary();
   else if(state.view==='tripDateReport') content.innerHTML = renderTripDateReport();
+  else if(state.view==='todaySalesSummary') content.innerHTML = renderTodaySalesSummary();
   else if(state.view==='staff') { content.innerHTML = renderStaff(); if(enteringStaffView && navigator.onLine) loadStaffList(); }
   else if(state.view==='settings') content.innerHTML = renderSettings();
   lastRenderedView = state.view;
@@ -2335,6 +2339,7 @@ function renderPayments(){
   return `
     <div class="toolbar">
       ${can('managePayments') ? `<button class="primary" onclick="openModal('payment')">+ Record payment</button>` : ''}
+      <button class="ghost" onclick="openTodaySalesSummary()">Today's sales summary</button>
     </div>
     <div class="card table-wrap">
       <table>
@@ -2358,6 +2363,139 @@ function renderPayments(){
       </table>
     </div>
   `;
+}
+
+// ---------- TODAY'S SALES SUMMARY ----------
+function todayIso(){ return new Date().toISOString().slice(0,10); }
+function todaysSalesRows(){
+  return state.payments.filter(p=>p.paid_on===todayIso()).map(p=>{
+    const h = hajiById(p.haji_id);
+    return { payment:p, haji:h, group: h?groupById(h.group_id):null, trips: tripsForPayment(p.id) };
+  });
+}
+function openTodaySalesSummary(){
+  state.view = 'todaySalesSummary';
+  state.mobileNavOpen = false;
+  render();
+}
+function closeTodaySalesSummary(){
+  state.view = 'payments';
+  render();
+}
+function renderTodaySalesSummary(){
+  const rows = todaysSalesRows();
+  const total = rows.reduce((s,r)=>s+Number(r.payment.amount),0);
+  const methods = ['cash','bank_transfer','other'];
+  const methodTotals = methods.map(m=>({
+    method: m,
+    count: rows.filter(r=>r.payment.method===m).length,
+    amount: rows.filter(r=>r.payment.method===m).reduce((s,r)=>s+Number(r.payment.amount),0)
+  })).filter(m=>m.count>0);
+  return `
+    <div class="toolbar">
+      <button class="ghost" onclick="closeTodaySalesSummary()">← Back to payments</button>
+      <button class="ghost" onclick="exportTodaySalesPdf()">Export PDF</button>
+      <button class="ghost" onclick="exportTodaySalesXlsx()">Export Excel</button>
+    </div>
+    <h2 style="margin-bottom:4px;">Today's sales summary</h2>
+    <p style="color:#6b6252;margin-bottom:16px;">${todayIso()}</p>
+    <div class="grid grid-4" style="margin-bottom:16px;">
+      <div class="card"><div class="stat-label">Payments today</div><div class="stat-value">${rows.length}</div></div>
+      <div class="card"><div class="stat-label">Total collected</div><div class="stat-value" style="color:var(--ok)">${fmt(total)}</div></div>
+      ${methodTotals.map(m=>`<div class="card"><div class="stat-label">${titleCase(m.method.replace('_',' '))}</div><div class="stat-value">${fmt(m.amount)}</div></div>`).join('')}
+    </div>
+    <div class="card table-wrap">
+      <table>
+        <thead><tr><th>Haji</th><th>Group</th><th>Trips</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${rows.map(r=>`<tr>
+            <td>${esc(r.haji?.full_name||'Unknown')}</td>
+            <td data-label="Group">${esc(r.group?.name||'—')}</td>
+            <td data-label="Trips">${r.trips.length?esc(r.trips.map(t=>t.trip_name).join(', ')):'—'}</td>
+            <td data-label="Method" style="text-transform:capitalize;">${r.payment.method.replace('_',' ')}</td>
+            <td data-label="Reference">${esc(r.payment.reference||'—')}</td>
+            <td data-label="Amount">${fmt(r.payment.amount)}</td>
+          </tr>`).join('') || `<tr><td colspan="6" class="empty">No payments recorded today yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+function exportTodaySalesXlsx(){
+  const rows = todaysSalesRows();
+  const total = rows.reduce((s,r)=>s+Number(r.payment.amount),0);
+  const aoa = [
+    ['Today\'s Sales Summary', todayIso()],
+    [],
+    ['Haji','Group','Trips','Method','Reference','Amount'],
+    ...rows.map(r=>[
+      r.haji?.full_name||'Unknown',
+      r.group?.name||'',
+      r.trips.map(t=>t.trip_name).join(', '),
+      titleCase(r.payment.method.replace('_',' ')),
+      r.payment.reference||'',
+      Number(r.payment.amount)
+    ]),
+    [],
+    ['', '', '', '', 'Total', total]
+  ];
+  exportRowsToXlsx(`Todays-Sales-Summary-${todayIso()}.xlsx`, 'Sales Summary', aoa);
+}
+function exportTodaySalesPdf(){
+  const rows = todaysSalesRows();
+  const total = rows.reduce((s,r)=>s+Number(r.payment.amount),0);
+  const body = `
+    <h1>Today's Sales Summary</h1>
+    <div class="sub">${esc(todayIso())} · ${rows.length} payment${rows.length===1?'':'s'}</div>
+    <table>
+      <thead><tr><th>Haji</th><th>Group</th><th>Trips</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead>
+      <tbody>
+        ${rows.map(r=>`<tr>
+          <td>${esc(r.haji?.full_name||'Unknown')}</td>
+          <td>${esc(r.group?.name||'—')}</td>
+          <td>${r.trips.length?esc(r.trips.map(t=>t.trip_name).join(', ')):'—'}</td>
+          <td style="text-transform:capitalize;">${esc(r.payment.method.replace('_',' '))}</td>
+          <td>${esc(r.payment.reference||'—')}</td>
+          <td>${fmt(r.payment.amount)}</td>
+        </tr>`).join('') || `<tr><td colspan="6">No payments recorded today.</td></tr>`}
+        <tr class="total-row"><td colspan="5">Total</td><td>${fmt(total)}</td></tr>
+      </tbody>
+    </table>
+  `;
+  exportHtmlToPdf(`Today's Sales Summary — ${todayIso()}`, body);
+}
+
+// ---------- EXPORT (PDF / XLSX) ----------
+// PDF: reuse the browser's own print-to-PDF, same pattern as printReceipt -- no extra dependency,
+// works the same everywhere the app already prints from.
+function exportHtmlToPdf(title, bodyHtml){
+  const w = window.open('', '_blank', 'width=850,height=900');
+  w.document.write(`
+    <html><head><title>${esc(title)}</title>
+    <style>
+      body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:32px;}
+      h1{font-size:20px;margin-bottom:2px;color:#0E3B3A;}
+      h2{font-size:15px;margin:18px 0 8px;color:#0E3B3A;}
+      .sub{color:#6b6252;font-size:12px;margin-bottom:18px;}
+      table{width:100%;border-collapse:collapse;margin-bottom:16px;}
+      th,td{padding:6px 8px;border-bottom:1px solid #ddd;font-size:12px;text-align:left;}
+      th{background:#f2ecdd;text-transform:uppercase;font-size:10px;letter-spacing:.04em;}
+      .total-row td{font-weight:700;border-top:2px solid #0E3B3A;border-bottom:none;}
+      @media print{ body{padding:0;} }
+    </style></head>
+    <body>${bodyHtml}</body></html>
+  `);
+  w.document.close();
+  w.focus();
+  setTimeout(()=>w.print(), 300);
+}
+// XLSX: SheetJS (loaded via CDN) converts a plain array-of-arrays into a real .xlsx workbook.
+function exportRowsToXlsx(filename, sheetName, aoa){
+  if(typeof XLSX==='undefined'){ showNotice('The Excel export library failed to load. Check your connection and try again.', 'error'); return; }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, (sheetName||'Sheet1').slice(0,31));
+  XLSX.writeFile(wb, filename);
 }
 
 function printReceipt(paymentId){
@@ -2794,6 +2932,8 @@ function renderTripSummary(){
   return `
     <div class="toolbar">
       <button class="ghost" onclick="closeTripSummary()">← Back to trip payments</button>
+      <button class="ghost" onclick="exportTripSummaryPdf()">Export PDF</button>
+      <button class="ghost" onclick="exportTripSummaryXlsx()">Export Excel</button>
     </div>
     <h2 style="margin-bottom:14px;">Trip payment summary</h2>
     <div class="card" style="margin-bottom:16px;max-width:420px;">
@@ -2806,6 +2946,51 @@ function renderTripSummary(){
       ? `<div class="empty"><h3>No trip payments yet</h3><p>Use "Collect trip payments" to record some first.</p></div>`
       : renderReportByTrip(rows)}
   `;
+}
+// Flattens the by-trip/by-category breakdown into plain rows, shared by both exporters.
+function tripSummaryFlatRows(rows){
+  const names = orderedTripNames(rows);
+  const flat = [];
+  names.forEach(name=>{
+    const group = rows.filter(r=>r.trip_name===name);
+    let paidSubtotal = 0, focSubtotal = 0;
+    REPORT_CATEGORIES.forEach(cat=>{
+      const paid = group.filter(r=>r.category===cat && !r.is_foc).length;
+      const foc = group.filter(r=>r.category===cat && r.is_foc).length;
+      paidSubtotal += paid; focSubtotal += foc;
+      flat.push({ trip:name, category:cat, paid, foc });
+    });
+    flat.push({ trip:name, category:'Subtotal', paid:paidSubtotal, foc:focSubtotal, isSubtotal:true });
+  });
+  return flat;
+}
+function exportTripSummaryXlsx(){
+  const fr = state.tripSummaryReport;
+  const rows = reportRows(fr);
+  const flat = tripSummaryFlatRows(rows);
+  const aoa = [
+    ['Trip Payment Summary', `${fr.dateFrom||'All time'} to ${fr.dateTo||'today'}`],
+    [],
+    ['Trip','Category','Paid','FOC'],
+    ...flat.map(f=>[f.trip, f.isSubtotal?'Subtotal':f.category, f.paid, f.foc])
+  ];
+  exportRowsToXlsx(`Trip-Payment-Summary-${todayIso()}.xlsx`, 'Trip Summary', aoa);
+}
+function exportTripSummaryPdf(){
+  const fr = state.tripSummaryReport;
+  const rows = reportRows(fr);
+  const flat = tripSummaryFlatRows(rows);
+  const body = `
+    <h1>Trip Payment Summary</h1>
+    <div class="sub">${esc(fr.dateFrom||'All time')} to ${esc(fr.dateTo||'today')}</div>
+    <table>
+      <thead><tr><th>Trip</th><th>Category</th><th>Paid</th><th>FOC</th></tr></thead>
+      <tbody>
+        ${flat.map(f=>`<tr${f.isSubtotal?' class="total-row"':''}><td>${esc(f.trip)}</td><td>${f.isSubtotal?'Subtotal':esc(f.category)}</td><td>${f.paid}</td><td>${f.foc}</td></tr>`).join('') || `<tr><td colspan="4">No trip payments in range.</td></tr>`}
+      </tbody>
+    </table>
+  `;
+  exportHtmlToPdf(`Trip Payment Summary`, body);
 }
 
 function renderTripDateReport(){
