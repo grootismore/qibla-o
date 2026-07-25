@@ -107,6 +107,7 @@
   .modal h3{margin-bottom:16px;}
   .field{margin-bottom:12px;}
   .two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .three-col{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
   .toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
   .empty{padding:40px;text-align:center;color:#8a8168;}
   .empty h3{color:#8a8168;margin-bottom:6px;}
@@ -215,6 +216,7 @@
     #main{padding:16px 16px calc(76px + env(safe-area-inset-bottom, 0px));}
     .grid-4{grid-template-columns:repeat(2,1fr);}
     .two-col{grid-template-columns:1fr;}
+    .three-col{grid-template-columns:1fr;}
     .auth-card{width:92vw;max-width:400px;padding:28px 22px;}
     input,select,textarea{font-size:16px;padding:10px 12px;} /* prevent iOS auto-zoom on focus + bigger tap area */
     button{padding:10px 14px;min-height:40px;}
@@ -824,6 +826,20 @@ function hajiBusMap(){
   for(const a of state.busAssignments){
     const bus = busesById.get(a.bus_id);
     if(bus) map.set(a.haji_id, bus);
+  }
+  return map;
+}
+// haji_id -> Set of trip_type_id already paid for (across all past payments), so the trip
+// collector can flag a trip as already paid when the same haji is picked again later.
+function hajiPaidTripTypeIdsMap(){
+  const hajiIdByPaymentId = new Map(state.payments.map(p=>[p.id, p.haji_id]));
+  const map = new Map();
+  for(const item of state.paymentTripItems){
+    if(!item.trip_type_id) continue;
+    const hajiId = hajiIdByPaymentId.get(item.payment_id);
+    if(!hajiId) continue;
+    if(!map.has(hajiId)) map.set(hajiId, new Set());
+    map.get(hajiId).add(item.trip_type_id);
   }
   return map;
 }
@@ -2424,6 +2440,14 @@ function addHajiToCollector(hajiId){
     tc.perHaji[hajiId] = { foc:false, trips:{} };
   }
 }
+function addGroupToCollector(){
+  const groupId = document.getElementById('collector-group').value;
+  if(!groupId) return;
+  const members = state.hajis.filter(h=>h.group_id===groupId);
+  if(!members.length){ showNotice('That group has no hajis yet.', 'error'); return; }
+  members.forEach(h=>addHajiToCollector(h.id));
+  render();
+}
 function addRoomToCollector(){
   const roomId = document.getElementById('collector-room').value;
   if(!roomId) return;
@@ -2490,11 +2514,11 @@ function collectorEligibleIds(){
 function collectorGrandTotal(){
   return state.tripCollector.selectedIds.reduce((s,id)=>s+collectorLineTotal(id),0);
 }
-function tripCheckboxHtml(tripType, checked, onchangeExpr, category){
+function tripCheckboxHtml(tripType, checked, onchangeExpr, category, alreadyPaid){
   const priceLabel = category
     ? (category==='Under 5' ? 'Free' : fmt(priceForCategory(tripType, category)))
     : `${fmt(tripType.price_adult)} adult / ${fmt(tripType.price_child)} child`;
-  return `<label class="trip-check"><input type="checkbox" ${checked?'checked':''} onchange="${onchangeExpr}"/><span class="trip-check-name">${esc(tripType.name)}</span><span class="trip-check-price mono">${priceLabel}</span></label>`;
+  return `<label class="trip-check"><input type="checkbox" ${checked?'checked':''} onchange="${onchangeExpr}"/><span class="trip-check-name">${esc(tripType.name)}</span><span class="trip-check-price mono">${priceLabel}</span>${alreadyPaid?'<span class="pill ok">Paid</span>':''}</label>`;
 }
 function renderTripCollector(){
   const tc = state.tripCollector;
@@ -2521,7 +2545,16 @@ function renderTripCollector(){
 
     <div class="card" style="margin-bottom:16px;">
       <h3 style="margin-bottom:14px;">Find customers</h3>
-      <div class="two-col">
+      <div class="three-col">
+        <div>
+          <label>Group</label>
+          ${customSelectHtml({
+            id: 'collector-group',
+            options: sortedGroupOptions(),
+            value: '', placeholder: 'Select group'
+          })}
+          <button class="ghost" style="width:100%;margin-top:8px;" onclick="addGroupToCollector()">Add Group</button>
+        </div>
         <div>
           <label>Room</label>
           ${customSelectHtml({
@@ -2550,13 +2583,16 @@ function renderTripCollector(){
         <button class="ghost" onclick="markAllFOC()">Mark all FOC</button>
         <button class="danger" onclick="clearAllCollector()">Clear All</button>
       </div>
-      ${tc.selectedIds.length ? tc.selectedIds.map(id=>{
+      ${(()=>{
+        const paidTripMap = hajiPaidTripTypeIdsMap();
+        return tc.selectedIds.length ? tc.selectedIds.map(id=>{
         const h = hajiById(id);
         if(!h) return '';
         const ph = tc.perHaji[id] || {foc:false, trips:{}};
         const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
         const category = ageCategory(h.age);
         const grp = groupById(h.group_id);
+        const paidTrips = paidTripMap.get(h.id);
         return `
           <div class="trip-row">
             <div class="who">
@@ -2564,12 +2600,13 @@ function renderTripCollector(){
               <div style="font-size:11px;color:#8a8168;">${grp?`${esc(grp.name)} · `:''}${esc(h.passport_no||'—')}${room?` · Room ${esc(room.room_number)}`:''} · ${category}</div>
             </div>
             <label class="trip-check"><input type="checkbox" ${ph.foc?'checked':''} onchange="toggleCollectorFOC('${id}',this.checked)"/> FOC</label>
-            ${state.tripTypes.map(t=>tripCheckboxHtml(t, !!ph.trips[t.id], `toggleCollectorTrip('${id}','${t.id}',this.checked)`, category)).join('')}
+            ${state.tripTypes.map(t=>tripCheckboxHtml(t, !!ph.trips[t.id], `toggleCollectorTrip('${id}','${t.id}',this.checked)`, category, paidTrips?.has(t.id))).join('')}
             <span class="trip-total">${fmt(collectorLineTotal(id))}</span>
             <button class="danger" onclick="removeFromCollector('${id}')">Remove</button>
           </div>
         `;
-      }).join('') : `<div class="empty">No customers selected yet — search or pick a room above.</div>`}
+      }).join('') : `<div class="empty">No customers selected yet — search, pick a room, or add a whole group above.</div>`;
+      })()}
     </div>
 
     <div class="collector-footer">
