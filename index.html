@@ -2429,6 +2429,7 @@ function openTripCollector(){
     paidOn: new Date().toISOString().slice(0,10),
     reference: '',
     searchQuery: '',
+    customerListOpen: false,
   };
   state.view = 'tripCollector';
   state.mobileNavOpen = false;
@@ -2573,22 +2574,24 @@ function renderTripCollector(){
           <button class="ghost" style="width:100%;margin-top:8px;" onclick="addRoomToCollector()">Add Room</button>
         </div>
       </div>
-      <label>Add or remove individually</label>
-      <input id="collector-search" placeholder="Search by name, passport, family code, group, or room…" value="${esc(tc.searchQuery||'')}" oninput="filterCollectorHajisList(this.value)" style="margin-bottom:8px;"/>
-      <div class="assign-list" id="collector-hajis-list" style="max-height:320px;overflow-y:auto;">
-        ${state.hajis.map(h=>{
-          const grp = groupById(h.group_id);
-          const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
-          const searchText = [h.full_name, h.passport_no, h.family_code, grp?.name, room?.room_number].filter(Boolean).join(' ').toLowerCase();
-          return `
-            <div class="assign-row" data-search="${esc(searchText)}">
-              <span>${esc(h.full_name)} ${grp?`<span style="color:#8a8168;">— ${esc(grp.name)}${room?` · Room ${esc(room.room_number)}`:''}</span>`:''}</span>
-              <input type="checkbox" style="width:auto;" ${tc.selectedIds.includes(h.id)?'checked':''} onchange="toggleCollectorSelection('${h.id}',this.checked)"/>
-            </div>
-          `;
-        }).join('') || '<div class="empty">No hajis yet</div>'}
-        <div id="collector-hajis-no-results" class="empty" style="display:none;">No matches found.</div>
-      </div>
+      <details ${tc.customerListOpen?'open':''} ontoggle="state.tripCollector.customerListOpen=this.open">
+        <summary style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6b6252;font-weight:600;cursor:pointer;">Add or remove individually</summary>
+        <input id="collector-search" placeholder="Search by name, passport, family code, group, or room…" value="${esc(tc.searchQuery||'')}" oninput="filterCollectorHajisList(this.value)" style="margin-top:8px;margin-bottom:8px;"/>
+        <div class="assign-list" id="collector-hajis-list" style="max-height:320px;overflow-y:auto;">
+          ${state.hajis.map(h=>{
+            const grp = groupById(h.group_id);
+            const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
+            const searchText = [h.full_name, h.passport_no, h.family_code, grp?.name, room?.room_number].filter(Boolean).join(' ').toLowerCase();
+            return `
+              <div class="assign-row" data-search="${esc(searchText)}">
+                <span>${esc(h.full_name)} ${grp?`<span style="color:#8a8168;">— ${esc(grp.name)}${room?` · Room ${esc(room.room_number)}`:''}</span>`:''}</span>
+                <input type="checkbox" style="width:auto;" ${tc.selectedIds.includes(h.id)?'checked':''} onchange="toggleCollectorSelection('${h.id}',this.checked)"/>
+              </div>
+            `;
+          }).join('') || '<div class="empty">No hajis yet</div>'}
+          <div id="collector-hajis-no-results" class="empty" style="display:none;">No matches found.</div>
+        </div>
+      </details>
     </div>
 
     <div class="card">
@@ -2670,7 +2673,7 @@ async function saveTripPayments(){
     }
   }
   const count = eligibleIds.length;
-  state.tripCollector = { selectedIds: [], perHaji: {}, template: {}, method: tc.method, paidOn: tc.paidOn, reference: '', searchQuery: '' };
+  state.tripCollector = { selectedIds: [], perHaji: {}, template: {}, method: tc.method, paidOn: tc.paidOn, reference: '', searchQuery: '', customerListOpen: false };
   await loadGroupData();
   showNotice(`Saved payments for ${count} customer${count===1?'':'s'}.`, 'success');
   render();
