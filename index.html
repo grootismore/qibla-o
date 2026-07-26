@@ -1758,6 +1758,10 @@ function hotelFieldHtml(leg, currentValue, isNew){
     </div>
   `;
 }
+function toggleNewGroupField(sel){
+  const wrap = sel.closest('form')?.querySelector('.new-group-field');
+  if(wrap) wrap.style.display = sel.value==='__new__' ? 'block' : 'none';
+}
 function toggleHotelOther(sel){
   const otherInput = sel.closest('.hotel-field-wrap')?.querySelector(`input[name="${sel.name.replace('_select','_other')}"]`);
   if(!otherInput) return;
@@ -1940,9 +1944,23 @@ async function saveHaji(e, id){
   e.preventDefault();
   if(!requireOnline()) return;
   const f = e.target;
+  let groupId = f.group_id.value;
+  if(groupId === '__new__'){
+    const newName = f.new_group_name.value.trim();
+    if(!newName){ showNotice('Enter a name for the new group.', 'error'); return; }
+    const existing = state.groups.find(g=>g.name.toLowerCase()===newName.toLowerCase());
+    if(existing){
+      groupId = existing.id;
+    } else {
+      const { data: newGroup, error: groupErr } = await sb.from('groups').insert({ name: newName }).select().single();
+      if(groupErr){ showNotice(groupErr.message, 'error'); return; }
+      state.groups.push(newGroup);
+      groupId = newGroup.id;
+    }
+  }
   const dob = f.date_of_birth.value || null;
   const payload = {
-    group_id: f.group_id.value,
+    group_id: groupId,
     full_name: f.full_name.value,
     passport_no: f.passport_no.value,
     phone: f.phone.value,
@@ -3699,10 +3717,15 @@ function renderModal(){
         <div class="field"><label>Group</label>
           ${customSelectHtml({
             name: 'group_id', required: true,
-            options: sortedGroupOptions(),
+            options: [{value:'__new__', label:'+ Add new group…'}, ...sortedGroupOptions()],
             value: data.group_id || state.activeGroupId || state.groups[0]?.id || '',
-            placeholder: 'Select a group'
+            placeholder: 'Select a group',
+            onChange: 'toggleNewGroupField(this)'
           })}
+        </div>
+        <div class="field new-group-field" style="display:none;margin-top:-6px;margin-bottom:14px;">
+          <label>New group name</label>
+          <input name="new_group_name" placeholder="e.g. Zahir Family"/>
         </div>
         <div class="field"><label>Full name</label><input name="full_name" value="${esc(data.full_name||'')}" required/></div>
         <div class="two-col">
