@@ -2739,42 +2739,63 @@ async function shareReceipt(paymentId){
 // ---------- GROUP PAYMENT RECEIPT ----------
 // A per-group rollup (every pilgrim's package due/paid/balance), so a whole batch's payment
 // status can be printed or shared in one document instead of one receipt per payment.
+// What a haji's payments actually covered: "Package" for any payment with no trip items
+// attached, plus the name of every trip paid for, so the receipt shows what was paid for
+// rather than just a lump sum.
+function hajiPaidForSummary(hajiId){
+  const payments = state.payments.filter(p=>p.haji_id===hajiId);
+  const tripNames = new Set();
+  let hasPackagePortion = false;
+  payments.forEach(p=>{
+    const items = tripsForPayment(p.id);
+    if(items.length) items.forEach(i=>tripNames.add(i.trip_name));
+    else hasPackagePortion = true;
+  });
+  const parts = [];
+  if(hasPackagePortion) parts.push('Package');
+  parts.push(...tripNames);
+  return parts.join(', ');
+}
 function groupReceiptRows(groupId){
   return state.hajis.filter(h=>h.group_id===groupId).map(h=>{
     const pkg = packageById(h.package_id);
     const due = pkg ? Number(pkg.price) : 0;
+    const hasPaid = state.payments.some(p=>p.haji_id===h.id);
     const paid = hajiPaid(h.id);
-    return { haji:h, pkg, due, paid, balance: due-paid };
+    return { haji:h, pkg, due, hasPaid, paidFor: hasPaid ? hajiPaidForSummary(h.id) : null, paid, balance: due-paid };
   });
 }
 function groupReceiptBodyHtml(groupId){
   const g = groupById(groupId);
   if(!g) return null;
   const rows = groupReceiptRows(groupId);
+  if(!rows.some(r=>r.hasPaid)) return null;
   const totalDue = rows.reduce((s,r)=>s+r.due,0);
   const totalPaid = rows.reduce((s,r)=>s+r.paid,0);
   return `
     <h1>Qibla MV — Group Payment Receipt</h1>
     <div class="sub">${esc(g.name)} · Issued ${new Date().toISOString().slice(0,10)}</div>
     <table>
-      <thead><tr><th>Pilgrim</th><th>Package</th><th>Due</th><th>Paid</th><th>Balance</th></tr></thead>
+      <thead><tr><th>Pilgrim</th><th>Package</th><th>Paid for</th><th>Due</th><th>Paid</th><th>Balance</th></tr></thead>
       <tbody>
-        ${rows.map(r=>`<tr><td>${esc(r.haji.full_name)}</td><td>${esc(r.pkg?.name||'—')}</td><td>${fmt(r.due)}</td><td>${fmt(r.paid)}</td><td>${fmt(r.balance)}</td></tr>`).join('') || `<tr><td colspan="5">No pilgrims in this group yet.</td></tr>`}
-        <tr class="total-row"><td colspan="2"><strong>Total (${rows.length} pilgrim${rows.length===1?'':'s'})</strong></td><td><strong>${fmt(totalDue)}</strong></td><td><strong>${fmt(totalPaid)}</strong></td><td><strong>${fmt(totalDue-totalPaid)}</strong></td></tr>
+        ${rows.map(r=>`<tr><td>${esc(r.haji.full_name)}</td><td>${esc(r.pkg?.name||'—')}</td><td>${r.hasPaid?esc(r.paidFor||'—'):'—'}</td><td>${fmt(r.due)}</td><td>${r.hasPaid?fmt(r.paid):'—'}</td><td>${fmt(r.balance)}</td></tr>`).join('') || `<tr><td colspan="6">No pilgrims in this group yet.</td></tr>`}
+        <tr class="total-row"><td colspan="3"><strong>Total (${rows.length} pilgrim${rows.length===1?'':'s'})</strong></td><td><strong>${fmt(totalDue)}</strong></td><td><strong>${fmt(totalPaid)}</strong></td><td><strong>${fmt(totalDue-totalPaid)}</strong></td></tr>
       </tbody>
     </table>
   `;
 }
 function printGroupReceipt(groupId){
   const g = groupById(groupId);
+  if(!g) return;
   const bodyHtml = groupReceiptBodyHtml(groupId);
-  if(!g || !bodyHtml) return;
+  if(!bodyHtml){ showNotice('No payment exists for any hajji in group.', 'error'); return; }
   exportHtmlToPdf(`Group Payment Receipt — ${g.name}`, bodyHtml);
 }
 async function shareGroupReceipt(groupId){
   const g = groupById(groupId);
+  if(!g) return;
   const bodyHtml = groupReceiptBodyHtml(groupId);
-  if(!g || !bodyHtml) return;
+  if(!bodyHtml){ showNotice('No payment exists for any hajji in group.', 'error'); return; }
   const rows = groupReceiptRows(groupId);
   const totalPaid = rows.reduce((s,r)=>s+r.paid,0);
   await shareHtmlAsImage({
