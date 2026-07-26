@@ -991,6 +991,10 @@ function groupsInSelectedMonth(){
   if(!state.selectedMonth || state.selectedMonth==='all') return state.groups;
   return state.groups.filter(g=>groupMonthKey(g)===state.selectedMonth);
 }
+function groupsForMonthKey(key){
+  if(!key || key==='all') return state.groups;
+  return state.groups.filter(g=>groupMonthKey(g)===key);
+}
 function sumCountsForGroups(countMap, groups){
   return groups.reduce((s,g)=>s+(countMap.get(g.id)||0),0);
 }
@@ -1686,7 +1690,8 @@ function renderGroups(){
     </div>
     <div class="toolbar">
       ${can('manageGroups') ? `<button class="primary" onclick="openModal('group')">+ New group</button>
-      <button class="ghost" onclick="openModal('hotels')">Manage hotels</button>` : ''}
+      <button class="ghost" onclick="openModal('hotels')">Manage hotels</button>
+      <button class="ghost" onclick="openModal('bulkGroupUpdate',{monthKey: state.selectedMonth||'all'})">Bulk update hotels &amp; dates</button>` : ''}
     </div>
     <div class="summary-list">
       ${sortedGroups.map(g=>`
@@ -1765,6 +1770,59 @@ async function setDefaultHotel(id, leg){
   const { data } = await sb.from('hotels').select('*').order('name');
   state.hotels = data || [];
   openModal('hotels');
+}
+
+// ---------- BULK UPDATE GROUPS (hotels + dates for many groups at once) ----------
+// Select's value IS the hotel name directly (groups.mecca_hotel/madinah_hotel are plain text,
+// not a hotel_id foreign key), unlike the per-group hotelFieldHtml which selects by hotel id.
+function bulkHotelSelectHtml(leg){
+  const list = hotelsForLeg(leg);
+  return `
+    <div class="hotel-field-wrap">
+      ${customSelectHtml({
+        name: `bulk_${leg}_hotel_select`,
+        options: [{value:'', label:"Don't change"}, ...list.map(h=>({value:h.name, label:h.name})), {value:'other', label:'Other (type manually)'}],
+        value: '',
+        placeholder: "Don't change",
+        onChange: 'toggleHotelOther(this)'
+      })}
+      <input name="bulk_${leg}_hotel_other" placeholder="Hotel name" style="display:none;margin-top:8px;"/>
+    </div>
+  `;
+}
+function resolveBulkHotelName(leg){
+  const sel = document.querySelector(`[name="bulk_${leg}_hotel_select"]`);
+  if(!sel) return '';
+  if(sel.value === 'other') return document.querySelector(`[name="bulk_${leg}_hotel_other"]`)?.value.trim() || '';
+  return sel.value;
+}
+function toggleAllBulkGroupCheckboxes(checked){
+  document.querySelectorAll('.bulk-group-checkbox').forEach(cb=>{ cb.checked = checked; });
+}
+async function applyBulkGroupUpdate(){
+  if(!requireOnline()) return;
+  const groupIds = [...document.querySelectorAll('.bulk-group-checkbox:checked')].map(cb=>cb.value);
+  if(!groupIds.length){ showNotice('Select at least one group to update.', 'error'); return; }
+
+  const payload = {};
+  const meccaHotel = resolveBulkHotelName('mecca');
+  if(meccaHotel) payload.mecca_hotel = meccaHotel;
+  const madinahHotel = resolveBulkHotelName('madinah');
+  if(madinahHotel) payload.madinah_hotel = madinahHotel;
+  const departure = document.querySelector('[name="bulk_departure_date"]')?.value;
+  if(departure) payload.departure_date = departure;
+  const returnDate = document.querySelector('[name="bulk_return_date"]')?.value;
+  if(returnDate) payload.return_date = returnDate;
+
+  if(!Object.keys(payload).length){ showNotice('Choose at least one field to update (a hotel or a date).', 'error'); return; }
+
+  const { error } = await sb.from('groups').update(payload).in('id', groupIds);
+  if(error){ showNotice(error.message, 'error'); return; }
+  const { data } = await sb.from('groups').select('*').order('departure_date', {ascending:true});
+  state.groups = data || [];
+  closeModal();
+  showNotice(`Updated ${groupIds.length} group${groupIds.length===1?'':'s'}.`, 'success');
+  render();
 }
 
 async function saveGroup(e, id){
@@ -3378,6 +3436,49 @@ function renderModal(){
           <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
         </div>
       </form>
+    `;
+  } else if(type==='bulkGroupUpdate'){
+    const monthKey = data.monthKey || 'all';
+    const monthGroups = groupsForMonthKey(monthKey);
+    const monthOptions = [{value:'all', label:'All months'}, ...availableUmrahMonths().map(k=>({value:k, label:groupMonthLabel(k)}))];
+    body = `
+      <h3>Bulk update hotels &amp; dates</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:14px;">Apply the same hotel or dates to every group at once — handy for an Umrah month where everyone shares the same hotel, except a few who arrange their own. Leave a field as "Don't change" or blank to leave it untouched; only the groups checked below get updated.</p>
+      <div class="field"><label>Umrah month</label>
+        ${customSelectHtml({
+          id: 'bulk-group-month',
+          options: monthOptions,
+          value: monthKey,
+          onChange: "openModal('bulkGroupUpdate',{monthKey:this.value})"
+        })}
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px;">
+        <label style="margin:0;">Groups to update (${monthGroups.length})</label>
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="ghost" onclick="toggleAllBulkGroupCheckboxes(true)">Select all</button>
+          <button type="button" class="ghost" onclick="toggleAllBulkGroupCheckboxes(false)">Select none</button>
+        </div>
+      </div>
+      <div class="assign-list" id="bulk-group-list" style="max-height:220px;overflow-y:auto;margin-bottom:16px;">
+        ${monthGroups.map(g=>`
+          <div class="assign-row">
+            <span>${esc(g.name)} <span style="color:#8a8168;">— ${esc(g.mecca_hotel||'no Mecca hotel')} / ${esc(g.madinah_hotel||'no Madinah hotel')}</span></span>
+            <input type="checkbox" class="bulk-group-checkbox" value="${g.id}" style="width:auto;" checked/>
+          </div>
+        `).join('') || '<div class="empty">No groups in this month.</div>'}
+      </div>
+      <div class="two-col">
+        <div class="field"><label>Mecca hotel</label>${bulkHotelSelectHtml('mecca')}</div>
+        <div class="field"><label>Madinah hotel</label>${bulkHotelSelectHtml('madinah')}</div>
+      </div>
+      <div class="two-col">
+        <div class="field"><label>Departure date</label>${customDateHtml({ name:'bulk_departure_date', value:'', placeholder:"Don't change" })}</div>
+        <div class="field"><label>Return date</label>${customDateHtml({ name:'bulk_return_date', value:'', placeholder:"Don't change" })}</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:16px;">
+        <button id="bulk-group-apply-btn" class="primary" style="flex:1" onclick="withBusyButton('bulk-group-apply-btn','Applying…',()=>applyBulkGroupUpdate())">Apply to selected groups</button>
+        <button type="button" class="ghost" style="flex:1" onclick="closeModal()">Cancel</button>
+      </div>
     `;
   } else if(type==='hotels'){
     body = `
