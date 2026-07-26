@@ -1,6 +1,6 @@
 {
-  "name": "Rihla — Umrah Back Office",
-  "short_name": "Rihla",
+  "name": "Qibla MV — Umrah Back Office",
+  "short_name": "Qibla MV",
   "description": "Umrah group operations: hajis, rooms, buses, payments, and staff roles.",
   "start_url": "./index.html",
   "scope": "./",

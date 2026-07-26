@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>Rihla — Umrah Back Office</title>
+<title>Qibla MV — Umrah Back Office</title>
 <meta name="description" content="Umrah group operations: hajis, rooms, buses, payments, and staff roles." />
 
 <link rel="manifest" href="manifest.json">
@@ -13,7 +13,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Rihla">
+<meta name="apple-mobile-web-app-title" content="Qibla MV">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
@@ -1391,7 +1391,7 @@ document.addEventListener('keydown', (e)=>{
 // ---------- RENDER ----------
 function currentPageTitle(){
   const match = getNavItems().find(item=>item.activeViews.includes(state.view));
-  return match ? match.label : 'Rihla';
+  return match ? match.label : 'Qibla MV';
 }
 function render(){
   if(!state.session){ renderAuth(); return; }
@@ -1403,7 +1403,7 @@ function render(){
       <div class="sidebar-backdrop" onclick="closeNav()"></div>
       <div id="sidebar">
         <button class="sidebar-close-btn" onclick="closeNav()" aria-label="Close menu">✕</button>
-        <h1>Rihla</h1>
+        <h1>Qibla MV</h1>
         <div class="tagline">Umrah group operations</div>
         <div style="color:var(--gold-soft);font-size:11px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.05em;">Signed in as ${roleLabel(state.myRole)}</div>
         ${navItems.map(item=>`<div class="nav-item ${item.activeViews.includes(state.view)?'active':''}" onclick="${item.onclick}"><span class="nav-icon">${icon(item.key,18)}</span><span>${item.label}</span></div>`).join('')}
@@ -1466,7 +1466,7 @@ function renderOfflineNoCacheScreen(){
   root.innerHTML = `
     <div class="auth-wrap">
       <div class="auth-card" style="text-align:center;">
-        <h1>Rihla</h1>
+        <h1>Qibla MV</h1>
         <div class="tagline">Umrah group operations</div>
         <p style="margin:16px 0;color:#6b6252;">You're offline and no cached data is available on this device yet. Connect to the internet once to load your data — after that it'll stay available offline.</p>
         <button class="gold" style="width:100%;" onclick="location.reload()">Retry</button>
@@ -1478,14 +1478,14 @@ function renderAuth(){
   root.innerHTML = `
     <div class="auth-wrap">
       <div class="auth-card">
-        <h1>Rihla</h1>
+        <h1>Qibla MV</h1>
         <div class="tagline">Umrah group operations</div>
         <div style="display:flex;gap:8px;margin:14px 0 6px;">
           <button class="${state.authMode==='staff'?'primary':'ghost'}" style="flex:1" onclick="setAuthMode('staff')">Staff</button>
           <button class="${state.authMode==='haji'?'primary':'ghost'}" style="flex:1" onclick="setAuthMode('haji')">Pilgrim</button>
         </div>
         ${state.authMode==='staff' ? `
-          <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Sign in if you already have an account. New here? Create one below — the very first account on Rihla becomes the system owner; everyone after that starts with basic access until a Qibla Admin sets their role.</p>
+          <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Sign in if you already have an account. New here? Create one below — the very first account on Qibla MV becomes the system owner; everyone after that starts with basic access until a Qibla Admin sets their role.</p>
           <div class="field"><label>Full name (for new staff account)</label><input id="auth-name" placeholder="Your name" autocomplete="name"/></div>
           <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" autofocus/></div>
           <div class="field"><label>Password</label><input id="auth-pass" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
@@ -1546,7 +1546,7 @@ function renderHajiDashboard(){
       <div style="width:100%;max-width:520px;margin:0 auto;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
           <div>
-            <h1 style="color:var(--sand);font-size:24px;">Rihla</h1>
+            <h1 style="color:var(--sand);font-size:24px;">Qibla MV</h1>
             <div style="color:var(--gold-soft);font-size:12px;font-style:italic;">Welcome, ${esc(h.full_name)}</div>
           </div>
           <button class="ghost" style="color:var(--sand);border-color:rgba(242,236,221,.35);" onclick="signOut()">Sign out</button>
@@ -2541,7 +2541,7 @@ function receiptBodyHtml(paymentId){
   const balance = due - paid;
   const trips = tripsForPayment(p.id);
   return `
-    <h1>Rihla — Payment Receipt</h1>
+    <h1>Qibla MV — Payment Receipt</h1>
     <div class="sub">${esc(g?.name||'')} · Issued ${new Date().toISOString().slice(0,10)}</div>
     <table>
       <tr><td>Pilgrim</td><td>${esc(h?.full_name||'—')}</td></tr>
@@ -2553,7 +2553,7 @@ function receiptBodyHtml(paymentId){
       <tr><td>Date</td><td>${p.paid_on}</td></tr>
       <tr><td>Reference</td><td>${esc(p.reference||'—')}</td></tr>
     </table>
-    <div class="total"><span>Balance remaining</span><span>${fmt(balance)}</span></div>
+    ${trips.length?'':`<div class="total"><span>Balance remaining</span><span>${fmt(balance)}</span></div>`}
     <div class="stamp">Authorized signature</div>
   `;
 }
@@ -2706,7 +2706,18 @@ function toggleTemplateTrip(tripTypeId, checked){
 }
 function applyTripsToAll(){
   const tc = state.tripCollector;
-  tc.selectedIds.forEach(id=>{ tc.perHaji[id].trips = {...tc.template}; });
+  // Skip any trip a given customer has already paid for, even though the template checkbox
+  // itself is checked -- otherwise "Apply to all" could silently re-select (and re-charge) a
+  // trip someone already paid for.
+  const paidMap = hajiPaidTripTypeIdsMap();
+  tc.selectedIds.forEach(id=>{
+    const alreadyPaidIds = paidMap.get(id);
+    const trips = {...tc.template};
+    if(alreadyPaidIds){
+      Object.keys(trips).forEach(tripId=>{ if(alreadyPaidIds.has(tripId)) delete trips[tripId]; });
+    }
+    tc.perHaji[id].trips = trips;
+  });
   render();
 }
 function markAllFOC(){
@@ -2738,7 +2749,9 @@ function tripCheckboxHtml(tripType, checked, onchangeExpr, category, alreadyPaid
   const priceLabel = category
     ? (category==='Under 5' ? 'Free' : fmt(priceForCategory(tripType, category)))
     : `${fmt(tripType.price_adult)} adult / ${fmt(tripType.price_child)} child`;
-  return `<label class="trip-check"><input type="checkbox" ${checked?'checked':''} onchange="${onchangeExpr}"/><span class="trip-check-name">${esc(tripType.name)}</span><span class="trip-check-price mono">${priceLabel}</span>${alreadyPaid?'<span class="pill ok">Paid</span>':''}</label>`;
+  // Already-paid trips can't be re-selected here -- ticking one again would record a second,
+  // duplicate payment for the same trip.
+  return `<label class="trip-check" ${alreadyPaid?'style="opacity:.6;"':''}><input type="checkbox" ${checked?'checked':''} ${alreadyPaid?'disabled title="Already paid — cannot select again"':''} onchange="${onchangeExpr}"/><span class="trip-check-name">${esc(tripType.name)}</span><span class="trip-check-price mono">${priceLabel}</span>${alreadyPaid?'<span class="pill ok">Paid</span>':''}</label>`;
 }
 function renderTripCollector(){
   const tc = state.tripCollector;
