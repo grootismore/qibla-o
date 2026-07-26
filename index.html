@@ -277,6 +277,13 @@
     .table-wrap td:first-child{padding-top:0;}
     .table-wrap td:last-child{padding-bottom:0;}
     .table-wrap .row-actions{margin-top:4px;}
+
+    /* Compact variant: short numeric columns (Paid/FOC/Total…) sit in a row instead of each
+       taking a full-width line, so a row like "Adult · Paid 5 · FOC 4 · Total 9" stays one glance. */
+    .table-wrap.stat-compact tr{padding:10px 14px;margin-bottom:8px;}
+    .table-wrap.stat-compact td{display:inline-block;width:auto;padding:0;margin:0 20px 0 0;vertical-align:top;}
+    .table-wrap.stat-compact td:last-child{margin-right:0;}
+    .table-wrap.stat-compact td:first-child{display:block;width:100%;font-weight:600;margin-bottom:6px;}
     .table-wrap tr.total-row{background:#faf6ea;border-color:var(--teal);}
   }
 
@@ -2946,7 +2953,7 @@ function renderReportByTrip(rows){
       const paidSubtotal = catRows.reduce((s,c)=>s+c.paid,0);
       const focSubtotal = catRows.reduce((s,c)=>s+c.foc,0);
       return `
-        <div class="card table-wrap">
+        <div class="card table-wrap stat-compact">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
             <strong>${esc(name)}</strong>
             <span class="pill ok">${paidSubtotal+focSubtotal} total</span>
