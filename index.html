@@ -86,6 +86,14 @@
   .install-btn{margin-top:10px;width:100%;}
   .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   .bottom-nav{display:none;}
+  .scroll-top-btn{
+    display:none;position:fixed;right:20px;bottom:24px;z-index:60;
+    width:42px;height:42px;border-radius:50%;border:none;
+    background:var(--teal);color:var(--sand);
+    align-items:center;justify-content:center;cursor:pointer;
+    box-shadow:0 3px 12px rgba(28,35,33,.28);
+  }
+  .scroll-top-btn.visible{display:flex;}
   .stat-label{font-size:11px;text-transform:uppercase;color:#6b6252;letter-spacing:.05em;font-weight:600;}
   .stat-value{font-family:'Fraunces',serif;font-size:28px;color:var(--teal);margin-top:4px;}
   .row-actions{display:flex;gap:6px;}
@@ -243,6 +251,9 @@
       display:flex;position:fixed;left:0;right:0;bottom:0;z-index:55;
       background:var(--teal);border-top:1px solid rgba(255,255,255,.1);
       padding-bottom:env(safe-area-inset-bottom, 0px);
+    }
+    .scroll-top-btn{
+      bottom:calc(76px + env(safe-area-inset-bottom, 0px));
     }
     .bottom-nav-item{
       flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
@@ -1392,6 +1403,14 @@ document.addEventListener('keydown', (e)=>{
   if(e.key==='Escape'){ closeAllCSelects(); closeAllCDates(); }
 });
 
+// Back-to-top button: attached once at load (rather than per-render, since render() rebuilds
+// the whole #app tree) and looks the button up fresh on every scroll tick so it survives that.
+window.addEventListener('scroll', ()=>{
+  const btn = document.getElementById('scroll-top-btn');
+  if(!btn) return;
+  btn.classList.toggle('visible', window.scrollY > 300);
+});
+
 // ---------- RENDER ----------
 function currentPageTitle(){
   const match = getNavItems().find(item=>item.activeViews.includes(state.view));
@@ -1426,6 +1445,9 @@ function render(){
         ${navItems.slice(0,4).map(item=>`<div class="bottom-nav-item ${item.activeViews.includes(state.view)?'active':''}" onclick="${item.onclick}">${icon(item.key,22)}<span>${item.label}</span></div>`).join('')}
         ${navItems.length>4 ? `<div class="bottom-nav-item ${state.mobileNavOpen?'active':''}" onclick="toggleNav()">${icon('more',22)}<span>More</span></div>` : ''}
       </nav>
+      <button id="scroll-top-btn" class="scroll-top-btn" onclick="window.scrollTo({top:0,behavior:'smooth'})" aria-label="Scroll to top">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l6-6 6 6"/></svg>
+      </button>
     </div>
     ${state.modal ? renderModal() : ''}
   `;
@@ -1573,7 +1595,7 @@ function renderHajiDashboard(){
         ` : ''}
 
         ${sections.includes('payments') ? `
-          <div class="card table-wrap" style="margin-bottom:14px;">
+          <div class="card table-wrap stat-compact" style="margin-bottom:14px;">
             <h3 style="margin-bottom:10px;">Payment history</h3>
             <table>
               <thead><tr><th>Date</th><th>Amount</th><th>Method</th></tr></thead>
@@ -2532,26 +2554,71 @@ function exportTodaySalesPdf(){
 // ---------- EXPORT (PDF / XLSX) ----------
 // PDF: reuse the browser's own print-to-PDF, same pattern as printReceipt -- no extra dependency,
 // works the same everywhere the app already prints from.
+const REPORT_STYLE = `
+  body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:32px;}
+  h1{font-size:20px;margin-bottom:2px;color:#0E3B3A;}
+  h2{font-size:15px;margin:18px 0 8px;color:#0E3B3A;}
+  .sub{color:#6b6252;font-size:12px;margin-bottom:18px;}
+  table{width:100%;border-collapse:collapse;margin-bottom:16px;}
+  th,td{padding:6px 8px;border-bottom:1px solid #ddd;font-size:12px;text-align:left;}
+  th{background:#f2ecdd;text-transform:uppercase;font-size:10px;letter-spacing:.04em;}
+  .total-row td{font-weight:700;border-top:2px solid #0E3B3A;border-bottom:none;}
+`;
+// Same rules as REPORT_STYLE, but scoped under .report-capture for when this markup is rendered
+// into the live app document (for html2canvas) rather than an isolated print window.
+const REPORT_CAPTURE_STYLE = `
+  .report-capture{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:32px;background:#fff;}
+  .report-capture h1{font-size:20px;margin-bottom:2px;color:#0E3B3A;}
+  .report-capture h2{font-size:15px;margin:18px 0 8px;color:#0E3B3A;}
+  .report-capture .sub{color:#6b6252;font-size:12px;margin-bottom:18px;}
+  .report-capture table{width:100%;border-collapse:collapse;margin-bottom:16px;}
+  .report-capture th,.report-capture td{padding:6px 8px;border-bottom:1px solid #ddd;font-size:12px;text-align:left;}
+  .report-capture th{background:#f2ecdd;text-transform:uppercase;font-size:10px;letter-spacing:.04em;}
+  .report-capture .total-row td{font-weight:700;border-top:2px solid #0E3B3A;border-bottom:none;}
+`;
 function exportHtmlToPdf(title, bodyHtml){
   const w = window.open('', '_blank', 'width=850,height=900');
   w.document.write(`
     <html><head><title>${esc(title)}</title>
-    <style>
-      body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:32px;}
-      h1{font-size:20px;margin-bottom:2px;color:#0E3B3A;}
-      h2{font-size:15px;margin:18px 0 8px;color:#0E3B3A;}
-      .sub{color:#6b6252;font-size:12px;margin-bottom:18px;}
-      table{width:100%;border-collapse:collapse;margin-bottom:16px;}
-      th,td{padding:6px 8px;border-bottom:1px solid #ddd;font-size:12px;text-align:left;}
-      th{background:#f2ecdd;text-transform:uppercase;font-size:10px;letter-spacing:.04em;}
-      .total-row td{font-weight:700;border-top:2px solid #0E3B3A;border-bottom:none;}
-      @media print{ body{padding:0;} }
-    </style></head>
+    <style>${REPORT_STYLE}@media print{ body{padding:0;} }</style></head>
     <body>${bodyHtml}</body></html>
   `);
   w.document.close();
   w.focus();
   setTimeout(()=>w.print(), 300);
+}
+// Shared by every "share this document as an image" action (individual receipts, group
+// receipts, …): renders bodyHtml offscreen under the given scoped stylesheet/class, captures it
+// with html2canvas, then hands the PNG to the OS share sheet (WhatsApp, Viber, Messages, etc.).
+// Falls back to downloading the image + opening a pre-filled WhatsApp Web tab where file sharing
+// isn't supported (most desktop browsers).
+async function shareHtmlAsImage({ bodyHtml, captureStyle, captureClass, shareText, filename, title }){
+  if(typeof html2canvas==='undefined'){ showNotice('The share tool failed to load. Check your connection and try again.', 'error'); return; }
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:fixed;left:-9999px;top:0;width:480px;';
+  holder.innerHTML = `<style>${captureStyle}</style><div class="${captureClass}">${bodyHtml}</div>`;
+  document.body.appendChild(holder);
+  try{
+    const canvas = await html2canvas(holder, { backgroundColor:'#ffffff', scale:2 });
+    const blob = await new Promise(res=>canvas.toBlob(res, 'image/png'));
+    const file = blob ? new File([blob], filename, { type:'image/png' }) : null;
+    if(file && navigator.canShare && navigator.canShare({ files:[file] })){
+      await navigator.share({ files:[file], title, text: shareText });
+    } else if(navigator.share){
+      await navigator.share({ title, text: shareText });
+    } else if(blob){
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+      window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank');
+      showNotice('Image downloaded — attach it in WhatsApp or Viber manually.', 'success');
+    }
+  } catch(err){
+    if(err?.name !== 'AbortError') showNotice('Could not share: ' + (err?.message || 'unknown error'), 'error');
+  } finally {
+    document.body.removeChild(holder);
+  }
 }
 // XLSX: SheetJS (loaded via CDN) converts a plain array-of-arrays into a real .xlsx workbook.
 function exportRowsToXlsx(filename, sheetName, aoa){
@@ -2638,37 +2705,68 @@ function printReceipt(paymentId){
 async function shareReceipt(paymentId){
   const p = state.payments.find(x=>x.id===paymentId);
   if(!p) return;
-  if(typeof html2canvas==='undefined'){ showNotice('The share tool failed to load. Check your connection and try again.', 'error'); return; }
   const h = hajiById(p.haji_id);
   const bodyHtml = receiptBodyHtml(paymentId);
   if(!bodyHtml) return;
-  const shareText = `Payment receipt for ${h?.full_name||'pilgrim'} — ${fmt(p.amount)} received on ${p.paid_on}.`;
-  const holder = document.createElement('div');
-  holder.style.cssText = 'position:fixed;left:-9999px;top:0;width:420px;';
-  holder.innerHTML = `<style>${RECEIPT_CAPTURE_STYLE}</style><div class="receipt-capture">${bodyHtml}</div>`;
-  document.body.appendChild(holder);
-  try{
-    const canvas = await html2canvas(holder, { backgroundColor:'#ffffff', scale:2 });
-    const blob = await new Promise(res=>canvas.toBlob(res, 'image/png'));
-    const filename = `Receipt-${(h?.full_name||'pilgrim').replace(/\s+/g,'-')}.png`;
-    const file = blob ? new File([blob], filename, { type:'image/png' }) : null;
-    if(file && navigator.canShare && navigator.canShare({ files:[file] })){
-      await navigator.share({ files:[file], title:'Payment Receipt', text: shareText });
-    } else if(navigator.share){
-      await navigator.share({ title:'Payment Receipt', text: shareText });
-    } else if(blob){
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = filename; a.click();
-      URL.revokeObjectURL(url);
-      window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank');
-      showNotice('Receipt image downloaded — attach it in WhatsApp or Viber manually.', 'success');
-    }
-  } catch(err){
-    if(err?.name !== 'AbortError') showNotice('Could not share the receipt: ' + (err?.message || 'unknown error'), 'error');
-  } finally {
-    document.body.removeChild(holder);
-  }
+  await shareHtmlAsImage({
+    bodyHtml,
+    captureStyle: RECEIPT_CAPTURE_STYLE,
+    captureClass: 'receipt-capture',
+    shareText: `Payment receipt for ${h?.full_name||'pilgrim'} — ${fmt(p.amount)} received on ${p.paid_on}.`,
+    filename: `Receipt-${(h?.full_name||'pilgrim').replace(/\s+/g,'-')}.png`,
+    title: 'Payment Receipt'
+  });
+}
+
+// ---------- GROUP PAYMENT RECEIPT ----------
+// A per-group rollup (every pilgrim's package due/paid/balance), so a whole batch's payment
+// status can be printed or shared in one document instead of one receipt per payment.
+function groupReceiptRows(groupId){
+  return state.hajis.filter(h=>h.group_id===groupId).map(h=>{
+    const pkg = packageById(h.package_id);
+    const due = pkg ? Number(pkg.price) : 0;
+    const paid = hajiPaid(h.id);
+    return { haji:h, pkg, due, paid, balance: due-paid };
+  });
+}
+function groupReceiptBodyHtml(groupId){
+  const g = groupById(groupId);
+  if(!g) return null;
+  const rows = groupReceiptRows(groupId);
+  const totalDue = rows.reduce((s,r)=>s+r.due,0);
+  const totalPaid = rows.reduce((s,r)=>s+r.paid,0);
+  return `
+    <h1>Qibla MV — Group Payment Receipt</h1>
+    <div class="sub">${esc(g.name)} · Issued ${new Date().toISOString().slice(0,10)}</div>
+    <table>
+      <thead><tr><th>Pilgrim</th><th>Package</th><th>Due</th><th>Paid</th><th>Balance</th></tr></thead>
+      <tbody>
+        ${rows.map(r=>`<tr><td>${esc(r.haji.full_name)}</td><td>${esc(r.pkg?.name||'—')}</td><td>${fmt(r.due)}</td><td>${fmt(r.paid)}</td><td>${fmt(r.balance)}</td></tr>`).join('') || `<tr><td colspan="5">No pilgrims in this group yet.</td></tr>`}
+        <tr class="total-row"><td colspan="2"><strong>Total (${rows.length} pilgrim${rows.length===1?'':'s'})</strong></td><td><strong>${fmt(totalDue)}</strong></td><td><strong>${fmt(totalPaid)}</strong></td><td><strong>${fmt(totalDue-totalPaid)}</strong></td></tr>
+      </tbody>
+    </table>
+  `;
+}
+function printGroupReceipt(groupId){
+  const g = groupById(groupId);
+  const bodyHtml = groupReceiptBodyHtml(groupId);
+  if(!g || !bodyHtml) return;
+  exportHtmlToPdf(`Group Payment Receipt — ${g.name}`, bodyHtml);
+}
+async function shareGroupReceipt(groupId){
+  const g = groupById(groupId);
+  const bodyHtml = groupReceiptBodyHtml(groupId);
+  if(!g || !bodyHtml) return;
+  const rows = groupReceiptRows(groupId);
+  const totalPaid = rows.reduce((s,r)=>s+r.paid,0);
+  await shareHtmlAsImage({
+    bodyHtml,
+    captureStyle: REPORT_CAPTURE_STYLE,
+    captureClass: 'report-capture',
+    shareText: `Group payment receipt for ${g.name} — ${fmt(totalPaid)} collected across ${rows.length} pilgrim${rows.length===1?'':'s'}.`,
+    filename: `Group-Receipt-${g.name.replace(/\s+/g,'-')}.png`,
+    title: 'Group Payment Receipt'
+  });
 }
 
 async function savePayment(e){
@@ -2935,7 +3033,7 @@ function renderTripCollector(){
         })}</div>
         <div><label>Reference</label><input id="collector-reference" value="${esc(tc.reference||'')}" oninput="state.tripCollector.reference=this.value" placeholder="Receipt no."/></div>
       </div>
-      <button id="save-trip-payments-btn" class="primary" style="padding:12px 24px;" onclick="withBusyButton('save-trip-payments-btn','Saving…',()=>saveTripPayments())">Confirm & Save Payment</button>
+      <button id="save-trip-payments-btn" class="primary" style="padding:12px 24px;" ${eligibleIds.length?'':'disabled'} onclick="withBusyButton('save-trip-payments-btn','Saving…',()=>saveTripPayments())">Confirm & Save Payment</button>
     </div>
   `;
 }
@@ -3056,13 +3154,13 @@ function renderReportByDate(rows){
     const dayTotalCount = tripRows.reduce((s,t)=>s+t.total,0);
     const dayTotalAmount = tripRows.reduce((s,t)=>s+t.amount,0);
     return `
-      <div class="card table-wrap" style="margin-bottom:16px;">
+      <div class="card table-wrap stat-compact" style="margin-bottom:16px;">
         <h3 style="margin-bottom:10px;">${date}</h3>
         <table>
           <thead><tr><th>Trip</th><th>Paid</th><th>FOC</th><th>Total</th><th>Amount</th></tr></thead>
           <tbody>
             ${tripRows.map(t=>`<tr><td>${esc(t.name)}</td><td data-label="Paid">${t.paid}</td><td data-label="FOC">${t.foc}</td><td data-label="Total">${t.total}</td><td data-label="Amount">${fmt(t.amount)}</td></tr>`).join('')}
-            <tr><td colspan="3"><strong>Day total</strong></td><td data-label="Total"><strong>${dayTotalCount}</strong></td><td data-label="Amount"><strong>${fmt(dayTotalAmount)}</strong></td></tr>
+            <tr class="total-row"><td colspan="3"><strong>Day total</strong></td><td data-label="Total"><strong>${dayTotalCount}</strong></td><td data-label="Amount"><strong>${fmt(dayTotalAmount)}</strong></td></tr>
           </tbody>
         </table>
       </div>
@@ -3415,6 +3513,10 @@ function renderModal(){
       </div>
       <button class="ghost" style="width:100%;margin-bottom:8px;" onclick="openModal('packages',{groupId:'${g.id}'})" ${can('managePackages')?'':'disabled'}>Manage packages <span class="badge-count">${state.packages.filter(p=>p.group_id===g.id).length}</span></button>
       ${g.id!==state.activeGroupId ? `<button class="ghost" style="width:100%;margin-bottom:8px;" onclick="switchGroup('${g.id}');openModal('groupDetail', state.groups.find(x=>x.id==='${g.id}'))">Set as default for new records</button>` : ''}
+      <div class="two-col" style="margin-bottom:8px;">
+        <button class="ghost" onclick="printGroupReceipt('${g.id}')">Print group receipt</button>
+        <button class="ghost" onclick="shareGroupReceipt('${g.id}')">Share group receipt</button>
+      </div>
       <div style="display:flex;gap:8px;">
         ${can('manageGroups') ? `<button class="primary" style="flex:1" onclick="openModal('group', state.groups.find(x=>x.id==='${g.id}'))">Edit</button>` : ''}
         <button class="ghost" style="flex:1" onclick="closeModal()">Close</button>
