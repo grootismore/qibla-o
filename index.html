@@ -892,10 +892,36 @@ function familyBusSplit(familyCode, tripTypeId, excludeBusId){
     .map(b=>({ bus:b, members: busOccupants(b.id).filter(h=>h.family_code===familyCode) }))
     .filter(s=>s.members.length);
 }
+// A bus's "scope" is what makes another bus a genuine alternative for the same trip: the same
+// Ziyarat trip type, or the same leg for airport transfer / Mecca-Madinah buses. A pilgrim
+// shouldn't end up on two buses in the same scope.
+function busScopeKey(bus){ return bus.trip_type_id ? `trip:${bus.trip_type_id}` : `leg:${bus.leg}`; }
+// haji_id -> the other bus (in the same scope, excluding busId) they're already assigned to.
+function hajiOtherBusInScopeMap(scopeKey, excludeBusId){
+  const busesById = new Map(state.buses.map(b=>[b.id,b]));
+  const map = new Map();
+  for(const a of state.busAssignments){
+    if(a.bus_id===excludeBusId) continue;
+    const otherBus = busesById.get(a.bus_id);
+    if(otherBus && busScopeKey(otherBus)===scopeKey) map.set(a.haji_id, otherBus);
+  }
+  return map;
+}
+// The pool of hajis assignable to this bus: eligible for the trip (or all hajis for a plain
+// leg), minus anyone already on a different bus in the same scope -- they can't ride two buses
+// for the same trip/leg, so they're left off entirely rather than offered and double-booked.
+function busAssignablePool(bus){
+  const basePool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis;
+  const otherBusByHaji = hajiOtherBusInScopeMap(busScopeKey(bus), bus.id);
+  return basePool.filter(h=>!otherBusByHaji.has(h.id));
+}
+function distinctFlightNumbers(){
+  return [...new Set(state.hajis.map(h=>h.flight_number).filter(Boolean))].sort(naturalCompare);
+}
 async function assignFamilyToBus(busId, familyCode){
   if(!requireOnline()) return;
   const bus = state.buses.find(b=>b.id===busId);
-  const pool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis;
+  const pool = busAssignablePool(bus);
   const familyHajis = familyCode ? pool.filter(h=>h.family_code===familyCode) : [];
   const alreadyOn = new Set(busOccupants(busId).map(h=>h.id));
   const toAssign = familyHajis.filter(h=>!alreadyOn.has(h.id));
@@ -914,8 +940,52 @@ async function assignFamilyToBus(busId, familyCode){
   const { error } = await sb.from('bus_assignments').insert(toAssign.map(h=>({bus_id:busId, haji_id:h.id})));
   if(error){ showNotice(error.message, 'error'); return; }
   await loadGroupData();
-  openModal('assignBus', {busId});
+  openModal('assignBus', {busId, searchQuery: state.modal?.data?.searchQuery});
   showNotice(`Assigned all ${toAssign.length} family member${toAssign.length===1?'':'s'} to Bus ${bus.bus_number}.`, 'success');
+}
+// Shared by the group/room/flight quick-add actions below: keeping a whole group/room/flight
+// together on one bus (often a family) is all-or-nothing -- if it doesn't fit, nobody is added,
+// so the bus operator can decide how to split them rather than ending up with a partial add.
+async function assignBatchToBus(busId, candidates, whatLabel){
+  if(!requireOnline()) return;
+  const bus = state.buses.find(b=>b.id===busId);
+  if(!candidates.length){ showNotice(`No eligible pilgrims from ${whatLabel} to add -- already assigned elsewhere, or not booked for this trip.`, 'error'); return; }
+  const remaining = busRemainingCapacity(bus);
+  if(candidates.length > remaining){
+    showNotice(`Only ${remaining} of ${candidates.length} seat${candidates.length===1?'':'s'} left on Bus ${bus.bus_number} for ${whatLabel}. Nobody was added -- free up seats or choose a different bus first.`, 'error');
+    return;
+  }
+  const { error } = await sb.from('bus_assignments').insert(candidates.map(h=>({bus_id:busId, haji_id:h.id})));
+  if(error){ showNotice(error.message, 'error'); return; }
+  await loadGroupData();
+  openModal('assignBus', {busId, searchQuery: state.modal?.data?.searchQuery});
+  showNotice(`Added ${candidates.length} pilgrim${candidates.length===1?'':'s'} from ${whatLabel} to Bus ${bus.bus_number}.`, 'success');
+}
+function addGroupToBus(busId, groupId){
+  if(!groupId) return;
+  const bus = state.buses.find(b=>b.id===busId);
+  const pool = busAssignablePool(bus);
+  const occIds = new Set(busOccupants(busId).map(h=>h.id));
+  const candidates = pool.filter(h=>h.group_id===groupId && !occIds.has(h.id));
+  assignBatchToBus(busId, candidates, esc(groupById(groupId)?.name||'that group'));
+}
+function addRoomToBus(busId, roomId){
+  if(!roomId) return;
+  const bus = state.buses.find(b=>b.id===busId);
+  const pool = busAssignablePool(bus);
+  const occIds = new Set(busOccupants(busId).map(h=>h.id));
+  const poolIds = new Set(pool.map(h=>h.id));
+  const candidates = roomOccupants(roomId).filter(h=>poolIds.has(h.id) && !occIds.has(h.id));
+  const room = state.rooms.find(r=>r.id===roomId);
+  assignBatchToBus(busId, candidates, `Room ${esc(room?.room_number||'')}`);
+}
+function addFlightToBus(busId, flightNumber){
+  if(!flightNumber) return;
+  const bus = state.buses.find(b=>b.id===busId);
+  const pool = busAssignablePool(bus);
+  const occIds = new Set(busOccupants(busId).map(h=>h.id));
+  const candidates = pool.filter(h=>h.flight_number===flightNumber && !occIds.has(h.id));
+  assignBatchToBus(busId, candidates, `flight ${esc(flightNumber)}`);
 }
 function groupById(id){ return state.groups.find(g=>g.id===id); }
 function naturalCompare(a,b){
@@ -1467,6 +1537,7 @@ function render(){
   else if(state.view==='settings') content.innerHTML = renderSettings();
   lastRenderedView = state.view;
   persistViewState();
+  if(state.modal?.type==='assignBus' && state.modal.data?.searchQuery) filterBusAssignList(state.modal.data.searchQuery);
 }
 
 function getNavItems(){
@@ -2435,7 +2506,21 @@ async function toggleBusAssign(busId, hajiId, assign){
     if(rec) await sb.from('bus_assignments').delete().eq('id', rec.id);
   }
   await loadGroupData();
-  openModal('assignBus', {busId});
+  openModal('assignBus', {busId, searchQuery: state.modal?.data?.searchQuery});
+}
+// Live-filters the assignBus modal's family clusters by name/passport/group/flight, matching
+// the searchable-list pattern used elsewhere (Hajis list, Trip Payment Collector).
+function filterBusAssignList(query){
+  if(state.modal?.data) state.modal.data.searchQuery = query;
+  const q = query.trim().toLowerCase();
+  let visibleCount = 0;
+  document.querySelectorAll('#bus-assign-list .family-cluster').forEach(cluster=>{
+    const match = !q || (cluster.dataset.search||'').includes(q);
+    cluster.style.display = match ? '' : 'none';
+    if(match) visibleCount++;
+  });
+  const noResults = document.getElementById('bus-assign-no-results');
+  if(noResults) noResults.style.display = (q && visibleCount===0) ? '' : 'none';
 }
 
 // ---------- PAYMENTS ----------
@@ -3988,7 +4073,9 @@ function renderModal(){
     const occIds = new Set(busOccupants(bus.id).map(h=>h.id));
     const tripLabel = busTripLabel(bus);
     const helper = bus.helper_staff_id ? staffById(bus.helper_staff_id) : null;
-    const pool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis;
+    const basePool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis;
+    const pool = busAssignablePool(bus);
+    const excludedCount = basePool.length - pool.length;
     const familiesMap = new Map();
     pool.forEach(h=>{
       const key = h.family_code || `__solo_${h.id}`;
@@ -4004,13 +4091,31 @@ function renderModal(){
         Helper: ${helper?esc(helper.full_name):'—'} · ${occIds.size + (helper?1:0)}/${bus.capacity} seats used
         ${bus.trip_type_id ? ` · Showing pilgrims booked for ${esc(tripLabel||'this trip')}` : ''}
       </p>
-      <div class="assign-list">
+      ${excludedCount ? `<p style="font-size:11px;color:#8a8168;margin:-6px 0 12px;">${excludedCount} pilgrim${excludedCount===1?'':'s'} already on another bus for ${bus.trip_type_id?`"${esc(tripLabel||'this trip')}"`:'this leg'} and left off this list.</p>` : ''}
+      <div class="three-col" style="margin-bottom:14px;">
+        <div><label>Add whole group</label>${customSelectHtml({
+          id: 'bus-assign-group', options: sortedGroupOptions(), value: '',
+          placeholder: 'Select a group', onChange: `addGroupToBus('${bus.id}', this.value)`
+        })}</div>
+        <div><label>Add whole room</label>${customSelectHtml({
+          id: 'bus-assign-room',
+          options: state.rooms.map(r=>({value:r.id, label:`${r.room_number} (${titleCase(r.hotel_leg)})`})),
+          value: '', placeholder: 'Select a room', onChange: `addRoomToBus('${bus.id}', this.value)`
+        })}</div>
+        <div><label>Add by flight</label>${customSelectHtml({
+          id: 'bus-assign-flight', options: distinctFlightNumbers().map(f=>({value:f, label:f})),
+          value: '', placeholder: 'Select a flight', onChange: `addFlightToBus('${bus.id}', this.value)`
+        })}</div>
+      </div>
+      <input id="bus-assign-search" placeholder="Search by name, passport, group, flight…" value="${esc(data.searchQuery||'')}" oninput="filterBusAssignList(this.value)" style="margin-bottom:10px;"/>
+      <div class="assign-list" id="bus-assign-list" style="max-height:340px;overflow-y:auto;">
         ${families.map((fam,famIdx)=>{
           const assignedHere = fam.members.filter(h=>occIds.has(h.id)).length;
           const splitElsewhere = bus.trip_type_id ? familyBusSplit(fam.familyCode, bus.trip_type_id, bus.id) : [];
           const assignBtnId = `assign-fam-btn-${bus.id}-${famIdx}`;
+          const searchText = fam.members.map(h=>[h.full_name, h.passport_no, h.flight_number, groupById(h.group_id)?.name].filter(Boolean).join(' ')).join(' ').toLowerCase();
           return `
-            <div class="family-cluster">
+            <div class="family-cluster" data-search="${esc(searchText)}">
               ${fam.familyCode ? `
                 <div class="family-cluster-header">
                   <span><strong>${esc(fam.familyCode)}</strong> <span class="pill ${assignedHere===fam.members.length?'ok':'warn'}">${assignedHere}/${fam.members.length} here</span></span>
@@ -4029,6 +4134,7 @@ function renderModal(){
             </div>
           `;
         }).join('') || `<div class="empty">${bus.trip_type_id ? 'No pilgrims have booked this trip yet' : 'No hajis yet'}</div>`}
+        <div id="bus-assign-no-results" class="empty" style="display:none;">No matches found.</div>
       </div>
       <button class="ghost" style="width:100%;margin-top:12px;" onclick="closeModal()">Done</button>
     `;
