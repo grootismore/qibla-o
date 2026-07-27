@@ -2882,7 +2882,10 @@ function groupReceiptRows(groupId){
     const due = pkg ? Number(pkg.price) : 0;
     const hasPaid = state.payments.some(p=>p.haji_id===h.id);
     const paid = hajiPaid(h.id);
-    return { haji:h, pkg, due, hasPaid, paidFor: hasPaid ? hajiPaidForSummary(h.id) : null, paid, balance: due-paid };
+    // No package and nothing actually paid (e.g. only FOC trip items) -- due/paid/balance would
+    // all read "MVR 0.00", which looks like a settled balance rather than no real payment at all.
+    const noTripPayment = hasPaid && due===0 && paid===0;
+    return { haji:h, pkg, due, hasPaid, paidFor: hasPaid ? hajiPaidForSummary(h.id) : null, paid, balance: due-paid, noTripPayment };
   });
 }
 function groupReceiptBodyHtml(groupId){
@@ -2898,7 +2901,7 @@ function groupReceiptBodyHtml(groupId){
     <table>
       <thead><tr><th>Pilgrim</th><th>Package</th><th>Paid for</th><th>Due</th><th>Paid</th><th>Balance</th></tr></thead>
       <tbody>
-        ${rows.map(r=>`<tr><td>${esc(r.haji.full_name)}</td><td>${esc(r.pkg?.name||'—')}</td><td>${r.hasPaid?esc(r.paidFor||'—'):'—'}</td><td>${fmt(r.due)}</td><td>${r.hasPaid?fmt(r.paid):'—'}</td><td>${fmt(r.balance)}</td></tr>`).join('') || `<tr><td colspan="6">No pilgrims in this group yet.</td></tr>`}
+        ${rows.map(r=>`<tr><td>${esc(r.haji.full_name)}</td><td>${esc(r.pkg?.name||'—')}</td><td>${r.noTripPayment?'Not paid for any trip':(r.hasPaid?esc(r.paidFor||'—'):'—')}</td><td>${r.noTripPayment?'—':fmt(r.due)}</td><td>${r.noTripPayment?'—':(r.hasPaid?fmt(r.paid):'—')}</td><td>${r.noTripPayment?'—':fmt(r.balance)}</td></tr>`).join('') || `<tr><td colspan="6">No pilgrims in this group yet.</td></tr>`}
         <tr class="total-row"><td colspan="3"><strong>Total (${rows.length} pilgrim${rows.length===1?'':'s'})</strong></td><td><strong>${fmt(totalDue)}</strong></td><td><strong>${fmt(totalPaid)}</strong></td><td><strong>${fmt(totalDue-totalPaid)}</strong></td></tr>
       </tbody>
     </table>
@@ -2941,10 +2944,10 @@ function exportGroupReceiptXlsx(groupId){
     ...rows.map(r=>[
       r.haji.full_name,
       r.pkg?.name||'',
-      r.hasPaid ? (r.paidFor||'—') : '—',
-      Number(r.due),
-      r.hasPaid ? Number(r.paid) : '—',
-      Number(r.balance)
+      r.noTripPayment ? 'Not paid for any trip' : (r.hasPaid ? (r.paidFor||'—') : '—'),
+      r.noTripPayment ? '—' : Number(r.due),
+      r.noTripPayment ? '—' : (r.hasPaid ? Number(r.paid) : '—'),
+      r.noTripPayment ? '—' : Number(r.balance)
     ]),
     [],
     [`Total (${rows.length} pilgrim${rows.length===1?'':'s'})`, '', '', totalDue, totalPaid, totalDue-totalPaid]
