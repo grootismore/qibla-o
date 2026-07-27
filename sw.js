@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rihla-shell-v1';
+const CACHE_NAME = 'qibla-mv-shell-v2';
 const APP_SHELL = [
   './index.html',
   './manifest.json',

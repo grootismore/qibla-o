@@ -534,7 +534,20 @@ window.addEventListener('online', async () => {
 
 // ---------- PWA ----------
 if('serviceWorker' in navigator){
-  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+  // Auto-reload once a new service worker takes over, so a fresh deploy (new nav items, a
+  // fixed permission check, etc.) shows up on the next normal reload instead of silently being
+  // served from a stale cache until the user thinks to hard-refresh.
+  navigator.serviceWorker.addEventListener('controllerchange', () => { window.location.reload(); });
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      // Ask the browser to check for a newer sw.js right away, and again whenever the tab
+      // regains focus -- update checks otherwise only happen on navigation.
+      reg.update().catch(()=>{});
+      document.addEventListener('visibilitychange', () => {
+        if(document.visibilityState==='visible') reg.update().catch(()=>{});
+      });
+    }).catch(()=>{});
+  });
 }
 let deferredInstallPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => {
