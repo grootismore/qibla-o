@@ -2862,7 +2862,7 @@ async function shareReceipt(paymentId){
 // What a haji's payments actually covered: "Package" for any payment with no trip items
 // attached, plus the name of every trip paid for, so the receipt shows what was paid for
 // rather than just a lump sum.
-function hajiPaidForSummary(hajiId){
+function hajiPaidBreakdown(hajiId){
   const payments = state.payments.filter(p=>p.haji_id===hajiId);
   const tripNames = new Set();
   let hasPackagePortion = false;
@@ -2871,6 +2871,10 @@ function hajiPaidForSummary(hajiId){
     if(items.length) items.forEach(i=>tripNames.add(i.trip_name));
     else hasPackagePortion = true;
   });
+  return { hasPackagePortion, tripNames: [...tripNames] };
+}
+function hajiPaidForSummary(hajiId){
+  const { hasPackagePortion, tripNames } = hajiPaidBreakdown(hajiId);
   const parts = [];
   if(hasPackagePortion) parts.push('Package');
   parts.push(...tripNames);
@@ -2882,11 +2886,23 @@ function groupReceiptRows(groupId){
     const due = pkg ? Number(pkg.price) : 0;
     const hasPaid = state.payments.some(p=>p.haji_id===h.id);
     const paid = hajiPaid(h.id);
-    // No package and nothing actually paid (e.g. only FOC trip items) -- due/paid/balance would
-    // all read "MVR 0.00", which looks like a settled balance rather than no real payment at all.
-    const noTripPayment = hasPaid && due===0 && paid===0;
-    return { haji:h, pkg, due, hasPaid, paidFor: hasPaid ? hajiPaidForSummary(h.id) : null, paid, balance: due-paid, noTripPayment };
+    const { tripNames } = hajiPaidBreakdown(h.id);
+    // No package and never even assigned a free (FOC) trip -- nothing to report, so blank the
+    // financial columns instead of a misleading "MVR 0.00". FOC pilgrims (tripNames.length>0)
+    // are NOT included here -- they genuinely paid for (were granted) those trips, just for free.
+    const noTripPayment = due===0 && tripNames.length===0;
+    const tripOnlyPayment = due===0 && tripNames.length>0;
+    return { haji:h, pkg, due, hasPaid, paidFor: hasPaid ? hajiPaidForSummary(h.id) : null, paid, balance: due-paid, noTripPayment, tripOnlyPayment };
   });
+}
+function groupReceiptRowHtml(r, dashed){
+  if(dashed) return `<tr><td>${esc(r.haji.full_name)}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>`;
+  return `<tr><td>${esc(r.haji.full_name)}</td><td>${esc(r.pkg?.name||'—')}</td><td>${r.hasPaid?esc(r.paidFor||'—'):'—'}</td><td>${fmt(r.due)}</td><td>${r.hasPaid?fmt(r.paid):'—'}</td><td>${fmt(r.balance)}</td></tr>`;
+}
+function groupReceiptSectionHeaderHtml(label, danger){
+  const bg = danger ? '#f3ded9' : '#f2ecdd';
+  const color = danger ? '#9B3A2E' : '#0E3B3A';
+  return `<tr><td colspan="6" style="background:${bg};color:${color};font-weight:700;text-transform:uppercase;font-size:11px;letter-spacing:.04em;padding:8px;">${esc(label)}</td></tr>`;
 }
 function groupReceiptBodyHtml(groupId){
   const g = groupById(groupId);
@@ -2895,13 +2911,20 @@ function groupReceiptBodyHtml(groupId){
   if(!rows.some(r=>r.hasPaid)) return null;
   const totalDue = rows.reduce((s,r)=>s+r.due,0);
   const totalPaid = rows.reduce((s,r)=>s+r.paid,0);
+  const packageRows = rows.filter(r=>r.due>0);
+  const tripOnlyRows = rows.filter(r=>r.tripOnlyPayment);
+  const noTripRows = rows.filter(r=>r.noTripPayment);
+  let bodyRowsHtml = packageRows.map(r=>groupReceiptRowHtml(r, false)).join('');
+  if(tripOnlyRows.length) bodyRowsHtml += groupReceiptSectionHeaderHtml('Paid for some trips', false) + tripOnlyRows.map(r=>groupReceiptRowHtml(r, false)).join('');
+  if(noTripRows.length) bodyRowsHtml += groupReceiptSectionHeaderHtml('Not paid for any trip', true) + noTripRows.map(r=>groupReceiptRowHtml(r, true)).join('');
+  if(!rows.length) bodyRowsHtml = `<tr><td colspan="6">No pilgrims in this group yet.</td></tr>`;
   return `
     <h1>Qibla MV — Group Payment Receipt</h1>
     <div class="sub">${esc(g.name)} · Issued ${new Date().toISOString().slice(0,10)}</div>
     <table>
       <thead><tr><th>Pilgrim</th><th>Package</th><th>Paid for</th><th>Due</th><th>Paid</th><th>Balance</th></tr></thead>
       <tbody>
-        ${rows.map(r=>`<tr><td>${esc(r.haji.full_name)}</td><td>${esc(r.pkg?.name||'—')}</td><td>${r.noTripPayment?'Not paid for any trip':(r.hasPaid?esc(r.paidFor||'—'):'—')}</td><td>${r.noTripPayment?'—':fmt(r.due)}</td><td>${r.noTripPayment?'—':(r.hasPaid?fmt(r.paid):'—')}</td><td>${r.noTripPayment?'—':fmt(r.balance)}</td></tr>`).join('') || `<tr><td colspan="6">No pilgrims in this group yet.</td></tr>`}
+        ${bodyRowsHtml}
         <tr class="total-row"><td colspan="3"><strong>Total (${rows.length} pilgrim${rows.length===1?'':'s'})</strong></td><td><strong>${fmt(totalDue)}</strong></td><td><strong>${fmt(totalPaid)}</strong></td><td><strong>${fmt(totalDue-totalPaid)}</strong></td></tr>
       </tbody>
     </table>
@@ -2930,6 +2953,10 @@ async function shareGroupReceipt(groupId){
     title: 'Group Payment Receipt'
   });
 }
+function groupReceiptXlsxRow(r, dashed){
+  if(dashed) return [r.haji.full_name, '—', '—', '—', '—', '—'];
+  return [r.haji.full_name, r.pkg?.name||'', r.hasPaid ? (r.paidFor||'—') : '—', Number(r.due), r.hasPaid ? Number(r.paid) : '—', Number(r.balance)];
+}
 function exportGroupReceiptXlsx(groupId){
   const g = groupById(groupId);
   if(!g) return;
@@ -2937,18 +2964,17 @@ function exportGroupReceiptXlsx(groupId){
   if(!rows.some(r=>r.hasPaid)){ showNotice('No payment exists for any hajji in group.', 'error'); return; }
   const totalDue = rows.reduce((s,r)=>s+r.due,0);
   const totalPaid = rows.reduce((s,r)=>s+r.paid,0);
+  const packageRows = rows.filter(r=>r.due>0);
+  const tripOnlyRows = rows.filter(r=>r.tripOnlyPayment);
+  const noTripRows = rows.filter(r=>r.noTripPayment);
+  const bodyRows = [...packageRows.map(r=>groupReceiptXlsxRow(r, false))];
+  if(tripOnlyRows.length){ bodyRows.push(['PAID FOR SOME TRIPS']); bodyRows.push(...tripOnlyRows.map(r=>groupReceiptXlsxRow(r, false))); }
+  if(noTripRows.length){ bodyRows.push(['NOT PAID FOR ANY TRIP']); bodyRows.push(...noTripRows.map(r=>groupReceiptXlsxRow(r, true))); }
   const aoa = [
     ['Group Payment Receipt', g.name, todayIso()],
     [],
     ['Pilgrim','Package','Paid for','Due','Paid','Balance'],
-    ...rows.map(r=>[
-      r.haji.full_name,
-      r.pkg?.name||'',
-      r.noTripPayment ? 'Not paid for any trip' : (r.hasPaid ? (r.paidFor||'—') : '—'),
-      r.noTripPayment ? '—' : Number(r.due),
-      r.noTripPayment ? '—' : (r.hasPaid ? Number(r.paid) : '—'),
-      r.noTripPayment ? '—' : Number(r.balance)
-    ]),
+    ...bodyRows,
     [],
     [`Total (${rows.length} pilgrim${rows.length===1?'':'s'})`, '', '', totalDue, totalPaid, totalDue-totalPaid]
   ];
