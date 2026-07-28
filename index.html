@@ -2891,8 +2891,9 @@ function groupReceiptRows(groupId){
     // financial columns instead of a misleading "MVR 0.00". FOC pilgrims (tripNames.length>0)
     // are NOT included here -- they genuinely paid for (were granted) those trips, just for free.
     const noTripPayment = due===0 && tripNames.length===0;
-    const tripOnlyPayment = due===0 && tripNames.length>0;
-    return { haji:h, pkg, due, hasPaid, paidFor: hasPaid ? hajiPaidForSummary(h.id) : null, paid, balance: due-paid, noTripPayment, tripOnlyPayment };
+    const paidAllTrips = due===0 && state.tripTypes.length>0 && tripNames.length>=state.tripTypes.length;
+    const tripOnlyPayment = due===0 && tripNames.length>0 && !paidAllTrips;
+    return { haji:h, pkg, due, hasPaid, paidFor: hasPaid ? hajiPaidForSummary(h.id) : null, paid, balance: due-paid, noTripPayment, tripOnlyPayment, paidAllTrips };
   });
 }
 function groupReceiptRowHtml(r, dashed){
@@ -2912,9 +2913,11 @@ function groupReceiptBodyHtml(groupId){
   const totalDue = rows.reduce((s,r)=>s+r.due,0);
   const totalPaid = rows.reduce((s,r)=>s+r.paid,0);
   const packageRows = rows.filter(r=>r.due>0);
+  const paidAllRows = rows.filter(r=>r.paidAllTrips);
   const tripOnlyRows = rows.filter(r=>r.tripOnlyPayment);
   const noTripRows = rows.filter(r=>r.noTripPayment);
   let bodyRowsHtml = packageRows.map(r=>groupReceiptRowHtml(r, false)).join('');
+  if(paidAllRows.length) bodyRowsHtml += groupReceiptSectionHeaderHtml('Paid for all trips', false) + paidAllRows.map(r=>groupReceiptRowHtml(r, false)).join('');
   if(tripOnlyRows.length) bodyRowsHtml += groupReceiptSectionHeaderHtml('Paid for some trips', false) + tripOnlyRows.map(r=>groupReceiptRowHtml(r, false)).join('');
   if(noTripRows.length) bodyRowsHtml += groupReceiptSectionHeaderHtml('Not paid for any trip', true) + noTripRows.map(r=>groupReceiptRowHtml(r, true)).join('');
   if(!rows.length) bodyRowsHtml = `<tr><td colspan="6">No pilgrims in this group yet.</td></tr>`;
@@ -2965,9 +2968,11 @@ function exportGroupReceiptXlsx(groupId){
   const totalDue = rows.reduce((s,r)=>s+r.due,0);
   const totalPaid = rows.reduce((s,r)=>s+r.paid,0);
   const packageRows = rows.filter(r=>r.due>0);
+  const paidAllRows = rows.filter(r=>r.paidAllTrips);
   const tripOnlyRows = rows.filter(r=>r.tripOnlyPayment);
   const noTripRows = rows.filter(r=>r.noTripPayment);
   const bodyRows = [...packageRows.map(r=>groupReceiptXlsxRow(r, false))];
+  if(paidAllRows.length){ bodyRows.push(['PAID FOR ALL TRIPS']); bodyRows.push(...paidAllRows.map(r=>groupReceiptXlsxRow(r, false))); }
   if(tripOnlyRows.length){ bodyRows.push(['PAID FOR SOME TRIPS']); bodyRows.push(...tripOnlyRows.map(r=>groupReceiptXlsxRow(r, false))); }
   if(noTripRows.length){ bodyRows.push(['NOT PAID FOR ANY TRIP']); bodyRows.push(...noTripRows.map(r=>groupReceiptXlsxRow(r, true))); }
   const aoa = [
