@@ -1887,6 +1887,50 @@ function toggleRawdhaFields(sel){
   const wrap = sel.closest('form')?.querySelector('.rawdha-fields');
   if(wrap) wrap.style.display = sel.value==='booked' ? 'grid' : 'none';
 }
+// Every 10-minute mark across 24 hours (e.g. "02:20 AM"), matching the slot granularity Nusuk
+// hands out for Rawdha visit bookings, plus a manual-entry fallback for anything that doesn't
+// land on one of those marks.
+const RAWDHA_TIME_SLOTS = (() => {
+  const slots = [];
+  for(let h=0; h<24; h++){
+    for(let m=0; m<60; m+=10){
+      const period = h<12 ? 'AM' : 'PM';
+      const displayHour = h % 12 === 0 ? 12 : h % 12;
+      slots.push(`${String(displayHour).padStart(2,'0')}:${String(m).padStart(2,'0')} ${period}`);
+    }
+  }
+  return slots;
+})();
+function rawdhaTimeSelectHtml(currentValue){
+  const matched = RAWDHA_TIME_SLOTS.includes(currentValue);
+  const selectValue = currentValue ? (matched ? currentValue : 'other') : '';
+  const showOther = selectValue === 'other';
+  const options = [
+    ...RAWDHA_TIME_SLOTS.map(t=>({value:t, label:t})),
+    {value:'other', label:'Other (type manually)'}
+  ];
+  return `
+    <div class="rawdha-time-wrap">
+      ${customSelectHtml({
+        name: 'rawdha_time_select',
+        options, value: selectValue,
+        placeholder: 'Select confirmed time',
+        onChange: 'toggleRawdhaTimeOther(this)'
+      })}
+      <input name="rawdha_time_other" placeholder="e.g. 10:00–10:30 AM" style="margin-top:6px;${showOther?'':'display:none;'}" value="${showOther?esc(currentValue||''):''}"/>
+    </div>
+  `;
+}
+function toggleRawdhaTimeOther(sel){
+  const otherInput = sel.closest('.rawdha-time-wrap')?.querySelector('input[name="rawdha_time_other"]');
+  if(otherInput) otherInput.style.display = sel.value==='other' ? 'block' : 'none';
+}
+function resolveRawdhaTime(form){
+  const sel = form['rawdha_time_select'];
+  if(!sel) return '';
+  if(sel.value === 'other') return form['rawdha_time_other'].value.trim();
+  return sel.value;
+}
 function toggleHotelOther(sel){
   const otherInput = sel.closest('.hotel-field-wrap')?.querySelector(`input[name="${sel.name.replace('_select','_other')}"]`);
   if(!otherInput) return;
@@ -2104,7 +2148,7 @@ async function saveHaji(e, id){
     package_id: f.package_id.value || null,
     rawdha_status: f.rawdha_status.value || 'not_booked',
     rawdha_date: f.rawdha_status.value==='booked' ? (f.rawdha_date.value || null) : null,
-    rawdha_time: f.rawdha_status.value==='booked' ? (f.rawdha_time.value || null) : null,
+    rawdha_time: f.rawdha_status.value==='booked' ? (resolveRawdhaTime(f) || null) : null,
     notes: f.notes.value
   };
   if(payload.age===undefined) delete payload.age;
@@ -2227,7 +2271,7 @@ async function saveRawdhaQuickUpdate(e, hajiId){
   const payload = {
     rawdha_status: status,
     rawdha_date: status==='booked' ? (f.rawdha_date.value || null) : null,
-    rawdha_time: status==='booked' ? (f.rawdha_time.value || null) : null,
+    rawdha_time: status==='booked' ? (resolveRawdhaTime(f) || null) : null,
   };
   const { error } = await sb.from('hajis').update(payload).eq('id', hajiId);
   if(error){ showNotice(error.message, 'error'); return; }
@@ -4175,7 +4219,7 @@ function renderModal(){
         </div>
         <div class="two-col rawdha-fields" style="display:${data.rawdha_status==='booked'?'grid':'none'};margin-top:-6px;">
           <div class="field"><label>Confirmed date</label>${customDateHtml({ name:'rawdha_date', value: data.rawdha_date||'' })}</div>
-          <div class="field"><label>Confirmed time slot</label><input name="rawdha_time" value="${esc(data.rawdha_time||'')}" placeholder="e.g. 10:00–10:30 AM"/></div>
+          <div class="field"><label>Confirmed time slot</label>${rawdhaTimeSelectHtml(data.rawdha_time||'')}</div>
         </div>
         <div class="field"><label>Notes</label><input name="notes" value="${esc(data.notes||'')}"/></div>
         <div style="display:flex;gap:8px;margin-top:16px;">
@@ -4201,7 +4245,7 @@ function renderModal(){
         </div>
         <div class="two-col rawdha-fields" style="display:${h.rawdha_status==='booked'?'grid':'none'};margin-top:-6px;">
           <div class="field"><label>Confirmed date</label>${customDateHtml({ name:'rawdha_date', value: h.rawdha_date||'' })}</div>
-          <div class="field"><label>Confirmed time slot</label><input name="rawdha_time" value="${esc(h.rawdha_time||'')}" placeholder="e.g. 10:00–10:30 AM"/></div>
+          <div class="field"><label>Confirmed time slot</label>${rawdhaTimeSelectHtml(h.rawdha_time||'')}</div>
         </div>
         <div style="display:flex;gap:8px;margin-top:16px;">
           <button type="submit" class="primary" style="flex:1">Save</button>
