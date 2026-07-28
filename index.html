@@ -2192,11 +2192,21 @@ function rawdhaBusFilteredHajis(){
   const busMap = hajiBusMap();
   return state.hajis.filter(h=>busMap.get(h.id)?.id===state.rawdhaBusFilter);
 }
+// Groups pilgrims from the same group together (e.g. everyone in G01, then everyone in G02),
+// which matches how staff actually work through the list -- group by group, bus by bus.
+function compareHajisByGroupThenName(a,b){
+  const ga = groupById(a.group_id)?.name || '';
+  const gb = groupById(b.group_id)?.name || '';
+  const groupCmp = naturalCompare(ga, gb);
+  if(groupCmp !== 0) return groupCmp;
+  return (a.full_name||'').localeCompare(b.full_name||'');
+}
 function rawdhaFilteredHajis(){
   const base = rawdhaBusFilteredHajis();
-  if(state.rawdhaStatusFilter==='booked') return base.filter(h=>h.rawdha_status==='booked');
-  if(state.rawdhaStatusFilter==='not_booked') return base.filter(h=>h.rawdha_status!=='booked');
-  return base;
+  let rows = base;
+  if(state.rawdhaStatusFilter==='booked') rows = base.filter(h=>h.rawdha_status==='booked');
+  else if(state.rawdhaStatusFilter==='not_booked') rows = base.filter(h=>h.rawdha_status!=='booked');
+  return [...rows].sort(compareHajisByGroupThenName);
 }
 function renderRawdhaBookings(){
   const busScoped = rawdhaBusFilteredHajis();
@@ -2285,7 +2295,7 @@ function rawdhaReportBodyHtml(){
   const total = state.hajis.length;
   const booked = state.hajis.filter(h=>h.rawdha_status==='booked').length;
   const rows = [...state.hajis].sort((a,b)=>{
-    if(a.rawdha_status===b.rawdha_status) return (a.full_name||'').localeCompare(b.full_name||'');
+    if(a.rawdha_status===b.rawdha_status) return compareHajisByGroupThenName(a,b);
     return a.rawdha_status==='booked' ? 1 : -1; // not-booked pilgrims first, as the actionable list
   });
   return `
@@ -2308,7 +2318,7 @@ function exportRawdhaPdf(){
 }
 function exportRawdhaXlsx(){
   const rows = [...state.hajis].sort((a,b)=>{
-    if(a.rawdha_status===b.rawdha_status) return (a.full_name||'').localeCompare(b.full_name||'');
+    if(a.rawdha_status===b.rawdha_status) return compareHajisByGroupThenName(a,b);
     return a.rawdha_status==='booked' ? 1 : -1;
   });
   const aoa = [
