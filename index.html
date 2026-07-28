@@ -421,6 +421,7 @@ let state = {
   roomAssignments: [],
   buses: [],
   busAssignments: [],
+  busHelpers: [],
   payments: [],
   modal: null, // {type, data}
   mobileNavOpen: false,
@@ -491,6 +492,7 @@ function saveCacheSnapshot(){
       roomAssignments: state.roomAssignments,
       buses: state.buses,
       busAssignments: state.busAssignments,
+      busHelpers: state.busHelpers,
       payments: state.payments,
       paymentTripItems: state.paymentTripItems,
       tripTypes: state.tripTypes,
@@ -521,6 +523,7 @@ function restoreFromCache(){
   state.roomAssignments = snap.roomAssignments||[];
   state.buses = snap.buses||[];
   state.busAssignments = snap.busAssignments||[];
+  state.busHelpers = snap.busHelpers||[];
   state.payments = snap.payments||[];
   state.paymentTripItems = snap.paymentTripItems||[];
   state.tripTypes = snap.tripTypes||[];
@@ -820,7 +823,7 @@ function countByGroup(rows){
 // "active" group, so nothing is hidden behind a group picker. Fetched unfiltered (no .in(ids))
 // specifically to avoid huge query strings once there are thousands of records across a season.
 async function loadGroupData(){
-  const [{data:packages},{data:hajis},{data:rooms},{data:buses},{data:tripTypes},{data:ra},{data:ba},{data:pay},{data:pti}] = await Promise.all([
+  const [{data:packages},{data:hajis},{data:rooms},{data:buses},{data:tripTypes},{data:ra},{data:ba},{data:bh},{data:pay},{data:pti}] = await Promise.all([
     sb.from('packages').select('*'),
     sb.from('hajis').select('*').order('full_name'),
     sb.from('rooms').select('*').order('room_number'),
@@ -828,6 +831,7 @@ async function loadGroupData(){
     sb.from('trip_types').select('*').order('name'),
     sb.from('room_assignments').select('*'),
     sb.from('bus_assignments').select('*'),
+    sb.from('bus_helpers').select('*'),
     sb.from('payments').select('*').order('paid_on', {ascending:false}),
     sb.from('payment_trip_items').select('*'),
   ]);
@@ -838,6 +842,7 @@ async function loadGroupData(){
   state.tripTypes = tripTypes || [];
   state.roomAssignments = ra || [];
   state.busAssignments = ba || [];
+  state.busHelpers = bh || [];
   state.payments = pay || [];
   state.paymentTripItems = pti || [];
   state.groupHajiCounts = countByGroup(state.hajis);
@@ -914,16 +919,16 @@ function hajisForTrip(tripTypeId){
   const hajiIds = new Set(state.payments.filter(p=>paidPaymentIds.has(p.id)).map(p=>p.haji_id));
   return state.hajis.filter(h=>hajiIds.has(h.id));
 }
-// A bus helper can be a registered staff member (helper_staff_id) or a manually-typed name
-// (helper_name) for people who aren't in the Staff list, e.g. kitchen staff. Only one is ever set.
-function busHelperLabel(bus){
-  if(bus.helper_staff_id){ const s = staffById(bus.helper_staff_id); return s ? `${s.full_name} (${roleLabel(s.role)})` : null; }
-  if(bus.helper_name) return bus.helper_name;
-  return null;
+// A bus can have several helpers (bus_helpers, one row each), each either a registered staff
+// member (staff_id) or a manually-typed name (helper_name) for people who aren't in the Staff
+// list, e.g. kitchen staff. Every helper counts as one passenger toward capacity.
+function busHelpersFor(busId){ return state.busHelpers.filter(h=>h.bus_id===busId); }
+function busHelperEntryLabel(h){
+  if(h.staff_id){ const s = staffById(h.staff_id); return s ? `${s.full_name} (${roleLabel(s.role)})` : 'Unknown staff'; }
+  return h.helper_name || 'Unknown';
 }
-function busHasHelper(bus){ return !!(bus.helper_staff_id || bus.helper_name); }
 function busRemainingCapacity(bus){
-  return bus.capacity - busOccupants(bus.id).length - (busHasHelper(bus)?1:0);
+  return bus.capacity - busOccupants(bus.id).length - busHelpersFor(bus.id).length;
 }
 function familyBusSplit(familyCode, tripTypeId, excludeBusId){
   if(!familyCode) return [];
@@ -1938,7 +1943,7 @@ function toggleHotelOther(sel){
   otherInput.style.display = sel.value==='other' ? 'block' : 'none';
 }
 function toggleBusHelperOther(sel){
-  const otherInput = sel.closest('form')?.querySelector('input[name="helper_name_other"]');
+  const otherInput = sel.closest('form')?.querySelector(`input[name="${sel.name}_other"]`);
   if(otherInput) otherInput.style.display = sel.value==='other' ? 'block' : 'none';
 }
 function resolveHotelName(form, leg){
@@ -2312,12 +2317,21 @@ function compareByRawdhaStatusThenGroup(a,b){
   if(pa !== pb) return pa - pb;
   return compareHajisByGroupThenName(a,b);
 }
+// Exports respect the "Filter by bus" dropdown (if one is selected) so staff can print/share
+// just that bus's list -- e.g. while riding it on the way to Madinah -- instead of always
+// exporting every pilgrim in the company.
+function rawdhaExportScope(){
+  const rows = rawdhaBusFilteredHajis();
+  const bus = state.rawdhaBusFilter ? state.buses.find(b=>b.id===state.rawdhaBusFilter) : null;
+  return { rows, bus };
+}
 function rawdhaReportBodyHtml(){
-  const total = state.hajis.length;
-  const booked = state.hajis.filter(h=>h.rawdha_status==='booked').length;
-  const rows = [...state.hajis].sort(compareByRawdhaStatusThenGroup);
+  const { rows: scoped, bus } = rawdhaExportScope();
+  const total = scoped.length;
+  const booked = scoped.filter(h=>h.rawdha_status==='booked').length;
+  const rows = [...scoped].sort(compareByRawdhaStatusThenGroup);
   return `
-    <h1>Qibla MV — Rawdha Bookings</h1>
+    <h1>Qibla MV — Rawdha Bookings${bus?` — ${esc(busSelectLabel(bus))}`:''}</h1>
     <div class="sub">Issued ${todayIso()} · ${booked} of ${total} pilgrims booked</div>
     <table>
       <thead><tr><th>Pilgrim</th><th>Group</th><th>Status</th><th>Date</th><th>Time</th></tr></thead>
@@ -2332,12 +2346,14 @@ function rawdhaReportBodyHtml(){
   `;
 }
 function exportRawdhaPdf(){
-  exportHtmlToPdf('Rawdha Bookings', rawdhaReportBodyHtml());
+  const { bus } = rawdhaExportScope();
+  exportHtmlToPdf(bus ? `Rawdha Bookings — ${busSelectLabel(bus)}` : 'Rawdha Bookings', rawdhaReportBodyHtml());
 }
 function exportRawdhaXlsx(){
-  const rows = [...state.hajis].sort(compareByRawdhaStatusThenGroup);
+  const { rows: scoped, bus } = rawdhaExportScope();
+  const rows = [...scoped].sort(compareByRawdhaStatusThenGroup);
   const aoa = [
-    ['Rawdha Bookings', todayIso()],
+    ['Rawdha Bookings', bus ? busSelectLabel(bus) : 'All buses', todayIso()],
     [],
     ['Pilgrim','Group','Status','Date','Time'],
     ...rows.map(h=>{
@@ -2346,7 +2362,8 @@ function exportRawdhaXlsx(){
       return [h.full_name, grp?.name||'', rawdhaStatusLabel(h.rawdha_status), isBooked&&h.rawdha_date?h.rawdha_date:'', isBooked&&h.rawdha_time?h.rawdha_time:''];
     })
   ];
-  exportRowsToXlsx(`Rawdha-Bookings-${todayIso()}.xlsx`, 'Rawdha Bookings', aoa);
+  const filenameSuffix = bus ? `-${bus.bus_number.replace(/\s+/g,'-')}` : '';
+  exportRowsToXlsx(`Rawdha-Bookings${filenameSuffix}-${todayIso()}.xlsx`, 'Rawdha Bookings', aoa);
 }
 
 function parseCsvLine(line){
@@ -2414,7 +2431,11 @@ const BULK_IMPORT_DEFS = {
       const legs = ['airport_transfer','mecca_madinah','ziyarat'];
       const normalizedLeg = legs.includes((leg||'').toLowerCase())?leg.toLowerCase():'airport_transfer';
       const helper = helperName ? state.staffList.find(s=>s.full_name.toLowerCase()===helperName.toLowerCase()) : null;
-      return { leg: normalizedLeg, bus_number, helper_staff_id: helper?helper.id:null, helper_name: (!helper && helperName) ? helperName : null, capacity: parseInt(capacity||'45'), _tripName: normalizedLeg==='ziyarat' ? (tripName||null) : null };
+      return {
+        leg: normalizedLeg, bus_number, capacity: parseInt(capacity||'45'),
+        _tripName: normalizedLeg==='ziyarat' ? (tripName||null) : null,
+        _helperStaffId: helper?helper.id:null, _helperName: (!helper && helperName) ? helperName : null
+      };
     }
   },
   hotels: {
@@ -2626,8 +2647,15 @@ async function bulkImportCSV(entity, groupId){
       }
       updateImportProgress(1, totalSteps, 'Saving buses…');
       rows = parsed.map(p=>({ ...stripTempKeys(p), trip_type_id: p._tripName ? (tripCache.get(p._tripName.toLowerCase())?.id||null) : null }));
-      const { error } = await sb.from(def.table).insert(rows);
+      const { data: newBuses, error } = await sb.from(def.table).insert(rows).select();
       if(error){ resetImportProgress(); showNotice(error.message, 'error'); return; }
+      const helperRows = [];
+      for(let i=0; i<(newBuses||[]).length; i++){
+        const p = parsed[i];
+        if(p._helperStaffId) helperRows.push({ bus_id: newBuses[i].id, staff_id: p._helperStaffId, helper_name: null });
+        else if(p._helperName) helperRows.push({ bus_id: newBuses[i].id, staff_id: null, helper_name: p._helperName });
+      }
+      if(helperRows.length) await sb.from('bus_helpers').insert(helperRows);
       updateImportProgress(2, totalSteps, 'Done');
     } else {
       updateImportProgress(0, totalSteps, 'Saving records…');
@@ -2709,8 +2737,8 @@ async function toggleRoomAssign(roomId, hajiId, assign){
 function busCardsHtml(buses, leg){
   return buses.map(b=>{
     const occ = busOccupants(b.id);
-    const helperLabel = busHelperLabel(b);
-    const total = occ.length + (busHasHelper(b)?1:0);
+    const helpers = busHelpersFor(b.id);
+    const total = occ.length + helpers.length;
     const over = total > b.capacity;
     const trip = leg==='ziyarat' ? state.tripTypes.find(t=>t.id===b.trip_type_id) : null;
     return `<div class="card">
@@ -2719,11 +2747,12 @@ function busCardsHtml(buses, leg){
         <span class="pill ${over?'bad':'ok'}">${total}/${b.capacity}</span>
       </div>
       ${trip ? `<div style="margin:4px 0;"><span class="pill warn">${esc(trip.name)}</span></div>` : ''}
-      <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Helper: ${helperLabel?esc(helperLabel):'—'}</div>
+      <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Helpers: ${helpers.length?esc(helpers.map(busHelperEntryLabel).join(', ')):'—'}</div>
       <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,total/b.capacity*100)}%"></div></div>
       <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('assignBus',{busId:'${b.id}'})" ${can('manageBuses')?'':'disabled'}>Assign pilgrims</button>
       ${can('manageBuses') ? `
         <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="ghost" style="flex:1;" onclick="openModal('busHelpers',{busId:'${b.id}'})">Helpers</button>
           <button class="ghost" style="flex:1;" onclick="openModal('bus', state.buses.find(x=>x.id==='${b.id}'))">Edit</button>
           <button id="del-bus-${b.id}" class="danger" style="flex:1;" onclick="withBusyButton('del-bus-${b.id}','Removing…',()=>deleteBus('${b.id}'))">Remove</button>
         </div>
@@ -2765,19 +2794,51 @@ async function saveBus(e, id){
   e.preventDefault();
   if(!requireOnline()) return;
   const f = e.target;
-  const helperIsOther = f.helper_staff_id.value==='other';
   const payload = {
     bus_number: f.bus_number.value, leg: f.leg.value,
-    helper_staff_id: helperIsOther ? null : (f.helper_staff_id.value||null),
-    helper_name: helperIsOther ? (f.helper_name_other.value.trim()||null) : null,
     capacity: parseInt(f.capacity.value||'45'),
     trip_type_id: f.leg.value==='ziyarat' ? (f.trip_type_id.value||null) : null
   };
-  let error;
+  let error, newBusId = id;
   if(id) ({ error } = await sb.from('buses').update(payload).eq('id', id));
-  else ({ error } = await sb.from('buses').insert(payload));
+  else {
+    const { data, error: insertErr } = await sb.from('buses').insert(payload).select().single();
+    error = insertErr;
+    newBusId = data?.id;
+  }
   if(error){ showNotice(error.message, 'error'); return; }
   closeModal(); await loadGroupData(); render();
+  if(!id && newBusId) openModal('busHelpers', {busId: newBusId});
+}
+// ---------- BUS HELPERS ----------
+async function addBusHelper(busId, staffId, helperName){
+  if(!requireOnline()) return;
+  const payload = { bus_id: busId, staff_id: staffId||null, helper_name: staffId?null:(helperName||null) };
+  const { error } = await sb.from('bus_helpers').insert(payload);
+  if(error){ showNotice(error.message, 'error'); return; }
+  await loadGroupData();
+  openModal('busHelpers', {busId});
+  showNotice('Helper added.', 'success');
+}
+function submitAddBusHelper(e, busId){
+  e.preventDefault();
+  const f = e.target;
+  const sel = f.new_helper.value;
+  if(!sel){ showNotice('Choose a staff member or "Other".', 'error'); return; }
+  if(sel==='other'){
+    const name = f.new_helper_other.value.trim();
+    if(!name){ showNotice("Enter the helper's name.", 'error'); return; }
+    addBusHelper(busId, null, name);
+  } else {
+    addBusHelper(busId, sel, null);
+  }
+}
+async function removeBusHelper(id, busId){
+  if(!requireOnline()) return;
+  const { error } = await sb.from('bus_helpers').delete().eq('id', id);
+  if(error){ showNotice(error.message, 'error'); return; }
+  await loadGroupData();
+  openModal('busHelpers', {busId});
 }
 async function deleteBus(id){
   const { error } = await sb.from('buses').delete().eq('id', id);
@@ -4429,21 +4490,47 @@ function renderModal(){
           })}
           ${!state.tripTypes.length ? `<p style="font-size:11px;color:#8a8168;margin-top:4px;">No trip types yet — add some via Manage trip types first.</p>` : ''}
         </div>
-        <div class="field">
-          <label>Main helper / Sheikh</label>
-          ${customSelectHtml({
-            name: 'helper_staff_id',
-            options: [{value:'',label:'— None —'}, ...state.staffList.map(s=>({value:s.id, label:`${s.full_name} (${roleLabel(s.role)})`})), {value:'other',label:'Other (type manually)'}],
-            value: data.helper_staff_id || (data.helper_name?'other':''),
-            onChange: 'toggleBusHelperOther(this)'
-          })}
-          <input name="helper_name_other" placeholder="Helper's name" style="margin-top:6px;${data.helper_name?'':'display:none;'}" value="${esc(data.helper_name||'')}"/>
-          <p style="font-size:11px;color:#8a8168;margin-top:4px;">Not in the staff list? Choose "Other" and type their name — e.g. kitchen staff. Counts as one passenger toward capacity.</p>
-        </div>
         <div class="field"><label>Capacity</label><input type="number" name="capacity" value="${data.capacity??45}"/></div>
+        ${data.id ? `<p style="font-size:11px;color:#8a8168;margin-bottom:12px;">Manage helpers from the bus card's "Helpers" button.</p>` : `<p style="font-size:11px;color:#8a8168;margin-bottom:12px;">You'll be able to add helpers right after saving.</p>`}
         <div style="display:flex;gap:8px;margin-top:16px;">
           <button type="submit" class="primary" style="flex:1">Save</button>
           <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
+    `;
+  } else if(type==='busHelpers'){
+    const bus = state.buses.find(b=>b.id===data.busId);
+    const helpers = busHelpersFor(bus.id);
+    const assignedStaffIds = new Set(helpers.map(h=>h.staff_id).filter(Boolean));
+    body = `
+      <h3>Helpers — Bus ${esc(bus.bus_number)}</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:12px;">Each helper counts as one passenger toward capacity.</p>
+      <div class="assign-list" style="margin-bottom:16px;">
+        ${helpers.map(h=>`
+          <div class="two-col" style="align-items:center;margin-bottom:8px;">
+            <span>${esc(busHelperEntryLabel(h))}</span>
+            <button class="danger" onclick="removeBusHelper('${h.id}','${bus.id}')">Remove</button>
+          </div>
+        `).join('') || '<div class="empty">No helpers assigned yet.</div>'}
+      </div>
+      <form onsubmit="submitAddBusHelper(event,'${bus.id}')">
+        <div class="field"><label>Add helper</label>
+          ${customSelectHtml({
+            name: 'new_helper',
+            options: [
+              {value:'', label:'— Select staff —'},
+              ...state.staffList.filter(s=>!assignedStaffIds.has(s.id)).map(s=>({value:s.id, label:`${s.full_name} (${roleLabel(s.role)})`})),
+              {value:'other', label:'Other (type manually)'}
+            ],
+            value: '',
+            onChange: 'toggleBusHelperOther(this)'
+          })}
+          <input name="new_helper_other" placeholder="Helper's name" style="margin-top:6px;display:none;"/>
+          <p style="font-size:11px;color:#8a8168;margin-top:4px;">Not in the staff list? Choose "Other" and type their name — e.g. kitchen staff.</p>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button type="submit" class="primary" style="flex:1">Add helper</button>
+          <button type="button" class="ghost" onclick="closeModal()">Close</button>
         </div>
       </form>
     `;
@@ -4451,7 +4538,7 @@ function renderModal(){
     const bus = state.buses.find(b=>b.id===data.busId);
     const occIds = new Set(busOccupants(bus.id).map(h=>h.id));
     const tripLabel = busTripLabel(bus);
-    const helperLabel = busHelperLabel(bus);
+    const helperNames = busHelpersFor(bus.id).map(busHelperEntryLabel);
     const basePool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis;
     const pool = busAssignablePool(bus);
     const excludedCount = basePool.length - pool.length;
@@ -4467,7 +4554,7 @@ function renderModal(){
     body = `
       <h3>Assign to Bus ${esc(bus.bus_number)}${tripLabel?` — ${esc(tripLabel)}`:''}</h3>
       <p style="font-size:12px;color:#6b6252;margin-bottom:12px;">
-        Helper: ${helperLabel?esc(helperLabel):'—'} · ${occIds.size + (busHasHelper(bus)?1:0)}/${bus.capacity} seats used
+        Helpers: ${helperNames.length?esc(helperNames.join(', ')):'—'} · ${occIds.size + helperNames.length}/${bus.capacity} seats used
         ${bus.trip_type_id ? ` · Showing pilgrims booked for ${esc(tripLabel||'this trip')}` : ''}
       </p>
       ${excludedCount ? `<p style="font-size:11px;color:#8a8168;margin:-6px 0 12px;">${excludedCount} pilgrim${excludedCount===1?'':'s'} already on another bus for ${bus.trip_type_id?`"${esc(tripLabel||'this trip')}"`:'this leg'} and left off this list.</p>` : ''}
