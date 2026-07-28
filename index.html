@@ -2200,44 +2200,68 @@ function setRawdhaBusFilter(busId){
 function busSelectLabel(b){
   return `Bus ${b.bus_number} — ${titleCase(b.leg.replace(/_/g,' '))}${busTripLabel(b)?` · ${busTripLabel(b)}`:''}`;
 }
+// Rawdha tracking covers pilgrims (hajis) AND bus helpers/sheikhs (bus_helpers) -- anyone
+// actually travelling with the group needs a slot, not just pilgrims. Each is normalized into a
+// common "entry" shape so the rest of this view doesn't need to care which table a row came from.
+function rawdhaEntries(){
+  const busMap = hajiBusMap();
+  const hajiEntries = state.hajis.map(h=>({
+    kind: 'haji', id: h.id, full_name: h.full_name,
+    groupLabel: groupById(h.group_id)?.name || '',
+    rawdha_status: h.rawdha_status, rawdha_date: h.rawdha_date, rawdha_time: h.rawdha_time,
+    busId: busMap.get(h.id)?.id || null,
+  }));
+  const helperEntries = state.busHelpers.map(bh=>{
+    const bus = state.buses.find(b=>b.id===bh.bus_id);
+    // Plain name only here (no role suffix like busHelperEntryLabel adds) -- the "Helper" pill
+    // on the row already marks these as helpers, so appending "(Helper)" again would duplicate
+    // the role label busHelperEntryLabel puts on staff (e.g. "Ali Hassan (Helper) (Helper)").
+    const name = bh.staff_id ? (staffById(bh.staff_id)?.full_name || 'Unknown staff') : (bh.helper_name || 'Unknown');
+    return {
+      kind: 'helper', id: bh.id, full_name: name,
+      groupLabel: bus ? `Bus ${bus.bus_number} helper` : 'Bus helper',
+      rawdha_status: bh.rawdha_status, rawdha_date: bh.rawdha_date, rawdha_time: bh.rawdha_time,
+      busId: bh.bus_id,
+    };
+  });
+  return [...hajiEntries, ...helperEntries];
+}
 // Scoped by bus only (used for the stat cards, so they reflect "everyone on this bus" even
 // while the status buttons/search further narrow which rows are actually listed below).
-function rawdhaBusFilteredHajis(){
-  if(!state.rawdhaBusFilter) return state.hajis;
-  const busMap = hajiBusMap();
-  return state.hajis.filter(h=>busMap.get(h.id)?.id===state.rawdhaBusFilter);
+function rawdhaBusFilteredEntries(){
+  const entries = rawdhaEntries();
+  if(!state.rawdhaBusFilter) return entries;
+  return entries.filter(e=>e.busId===state.rawdhaBusFilter);
 }
-// Groups pilgrims from the same group together (e.g. everyone in G01, then everyone in G02),
-// which matches how staff actually work through the list -- group by group, bus by bus.
-function compareHajisByGroupThenName(a,b){
-  const ga = groupById(a.group_id)?.name || '';
-  const gb = groupById(b.group_id)?.name || '';
-  const groupCmp = naturalCompare(ga, gb);
+// Groups entries by their group/bus label (e.g. everyone in G01, then everyone in G02, then
+// each bus's helpers), which matches how staff actually work through the list.
+function compareRawdhaEntriesByGroupThenName(a,b){
+  const groupCmp = naturalCompare(a.groupLabel||'', b.groupLabel||'');
   if(groupCmp !== 0) return groupCmp;
   return (a.full_name||'').localeCompare(b.full_name||'');
 }
-function rawdhaFilteredHajis(){
-  const base = rawdhaBusFilteredHajis();
+function rawdhaFilteredEntries(){
+  const base = rawdhaBusFilteredEntries();
   let rows = base;
-  if(state.rawdhaStatusFilter==='booked') rows = base.filter(h=>h.rawdha_status==='booked');
-  else if(state.rawdhaStatusFilter==='not_booked') rows = base.filter(h=>h.rawdha_status==='not_booked');
-  else if(state.rawdhaStatusFilter==='visited_recently') rows = base.filter(h=>h.rawdha_status==='visited_recently');
-  return [...rows].sort(compareHajisByGroupThenName);
+  if(state.rawdhaStatusFilter==='booked') rows = base.filter(e=>e.rawdha_status==='booked');
+  else if(state.rawdhaStatusFilter==='not_booked') rows = base.filter(e=>e.rawdha_status==='not_booked');
+  else if(state.rawdhaStatusFilter==='visited_recently') rows = base.filter(e=>e.rawdha_status==='visited_recently');
+  return [...rows].sort(compareRawdhaEntriesByGroupThenName);
 }
 function renderRawdhaBookings(){
-  const busScoped = rawdhaBusFilteredHajis();
+  const busScoped = rawdhaBusFilteredEntries();
   const total = busScoped.length;
-  const booked = busScoped.filter(h=>h.rawdha_status==='booked').length;
-  const visitedRecently = busScoped.filter(h=>h.rawdha_status==='visited_recently').length;
+  const booked = busScoped.filter(e=>e.rawdha_status==='booked').length;
+  const visitedRecently = busScoped.filter(e=>e.rawdha_status==='visited_recently').length;
   const notBooked = total - booked - visitedRecently;
-  const rows = rawdhaFilteredHajis();
+  const rows = rawdhaFilteredEntries();
   return `
     <div class="toolbar">
       <button class="ghost" onclick="exportRawdhaPdf()">Export PDF</button>
       <button class="ghost" onclick="exportRawdhaXlsx()">Export Excel</button>
     </div>
     <div class="grid grid-4" style="margin-bottom:16px;">
-      <div class="card"><div class="stat-label">${state.rawdhaBusFilter?'Pilgrims on this bus':'Total pilgrims'}</div><div class="stat-value">${total}</div></div>
+      <div class="card"><div class="stat-label">${state.rawdhaBusFilter?'People on this bus':'Total people'}</div><div class="stat-value">${total}</div></div>
       <div class="card"><div class="stat-label">Rawdha booked</div><div class="stat-value" style="color:#3D6B4C">${booked}</div></div>
       <div class="card"><div class="stat-label">Not booked yet</div><div class="stat-value" style="color:${notBooked?'#9B3A2E':'#3D6B4C'}">${notBooked}</div></div>
       <div class="card"><div class="stat-label">Visited within 1 year</div><div class="stat-value" style="color:var(--teal-2)">${visitedRecently}</div></div>
@@ -2261,19 +2285,18 @@ function renderRawdhaBookings(){
       <button class="${state.rawdhaStatusFilter==='visited_recently'?'primary':'ghost'}" style="flex:1;min-width:80px;" onclick="setRawdhaStatusFilter('visited_recently')">Visited recently</button>
     </div>
     <div class="summary-list" id="rawdha-list">
-      ${rows.map(h=>{
-        const grp = groupById(h.group_id);
-        const isBooked = h.rawdha_status==='booked';
-        const searchText = [h.full_name, grp?.name].filter(Boolean).join(' ').toLowerCase();
+      ${rows.map(e=>{
+        const isBooked = e.rawdha_status==='booked';
+        const searchText = [e.full_name, e.groupLabel].filter(Boolean).join(' ').toLowerCase();
         return `
         <div class="summary-row" data-search="${esc(searchText)}">
           <div>
-            <div class="summary-name">${esc(h.full_name)} <span class="pill ${rawdhaStatusPillClass(h.rawdha_status)}">${rawdhaStatusLabel(h.rawdha_status)}</span></div>
-            <div class="summary-sub">${esc(grp?.name||'—')}${isBooked?` · ${h.rawdha_date?formatDateDisplay(h.rawdha_date):'—'}${h.rawdha_time?` · ${esc(h.rawdha_time)}`:''}`:''}</div>
+            <div class="summary-name">${esc(e.full_name)} ${e.kind==='helper'?'<span class="pill info">Helper</span>':''} <span class="pill ${rawdhaStatusPillClass(e.rawdha_status)}">${rawdhaStatusLabel(e.rawdha_status)}</span></div>
+            <div class="summary-sub">${esc(e.groupLabel||'—')}${isBooked?` · ${e.rawdha_date?formatDateDisplay(e.rawdha_date):'—'}${e.rawdha_time?` · ${esc(e.rawdha_time)}`:''}`:''}</div>
           </div>
-          <button class="ghost" onclick="openModal('rawdhaQuickUpdate', hajiById('${h.id}'))">Update</button>
+          <button class="ghost" onclick="openModal('rawdhaQuickUpdate', {kind:'${e.kind}', id:'${e.id}'})">Update</button>
         </div>
-      `;}).join('') || `<div class="empty">No pilgrims match this filter.</div>`}
+      `;}).join('') || `<div class="empty">No one matches this filter.</div>`}
     </div>
     <div id="rawdha-no-results" class="empty" style="display:none;">No matches found.</div>
   `;
@@ -2290,7 +2313,7 @@ function filterRawdhaList(query){
   const noResults = document.getElementById('rawdha-no-results');
   if(noResults) noResults.style.display = (q && visibleCount===0) ? '' : 'none';
 }
-async function saveRawdhaQuickUpdate(e, hajiId){
+async function saveRawdhaQuickUpdate(e, kind, id){
   e.preventDefault();
   if(!requireOnline()) return;
   const f = e.target;
@@ -2300,47 +2323,48 @@ async function saveRawdhaQuickUpdate(e, hajiId){
     rawdha_date: status==='booked' ? (f.rawdha_date.value || null) : null,
     rawdha_time: status==='booked' ? (resolveRawdhaTime(f) || null) : null,
   };
-  const { error } = await sb.from('hajis').update(payload).eq('id', hajiId);
+  const table = kind==='helper' ? 'bus_helpers' : 'hajis';
+  const { error } = await sb.from(table).update(payload).eq('id', id);
   if(error){ showNotice(error.message, 'error'); return; }
-  const h = state.hajis.find(x=>x.id===hajiId);
-  if(h) Object.assign(h, payload);
+  const list = kind==='helper' ? state.busHelpers : state.hajis;
+  const rec = list.find(x=>x.id===id);
+  if(rec) Object.assign(rec, payload);
   closeModal();
   render();
   showNotice('Rawdha booking updated.', 'success');
 }
-// Sort order for reports: still-outstanding pilgrims first (most actionable), then confirmed
-// bookings, then exempt/already-visited pilgrims last (nothing left to do for them).
+// Sort order for reports: still-outstanding people first (most actionable), then confirmed
+// bookings, then exempt/already-visited people last (nothing left to do for them).
 const RAWDHA_STATUS_SORT_PRIORITY = { not_booked: 0, booked: 1, visited_recently: 2 };
 function compareByRawdhaStatusThenGroup(a,b){
   const pa = RAWDHA_STATUS_SORT_PRIORITY[a.rawdha_status] ?? 0;
   const pb = RAWDHA_STATUS_SORT_PRIORITY[b.rawdha_status] ?? 0;
   if(pa !== pb) return pa - pb;
-  return compareHajisByGroupThenName(a,b);
+  return compareRawdhaEntriesByGroupThenName(a,b);
 }
 // Exports respect the "Filter by bus" dropdown (if one is selected) so staff can print/share
 // just that bus's list -- e.g. while riding it on the way to Madinah -- instead of always
 // exporting every pilgrim in the company.
 function rawdhaExportScope(){
-  const rows = rawdhaBusFilteredHajis();
+  const rows = rawdhaBusFilteredEntries();
   const bus = state.rawdhaBusFilter ? state.buses.find(b=>b.id===state.rawdhaBusFilter) : null;
   return { rows, bus };
 }
 function rawdhaReportBodyHtml(){
   const { rows: scoped, bus } = rawdhaExportScope();
   const total = scoped.length;
-  const booked = scoped.filter(h=>h.rawdha_status==='booked').length;
+  const booked = scoped.filter(e=>e.rawdha_status==='booked').length;
   const rows = [...scoped].sort(compareByRawdhaStatusThenGroup);
   return `
     <h1>Qibla MV — Rawdha Bookings${bus?` — ${esc(busSelectLabel(bus))}`:''}</h1>
-    <div class="sub">Issued ${todayIso()} · ${booked} of ${total} pilgrims booked</div>
+    <div class="sub">Issued ${todayIso()} · ${booked} of ${total} booked</div>
     <table>
-      <thead><tr><th>Pilgrim</th><th>Group</th><th>Status</th><th>Date</th><th>Time</th></tr></thead>
+      <thead><tr><th>Name</th><th>Group</th><th>Status</th><th>Date</th><th>Time</th></tr></thead>
       <tbody>
-        ${rows.map(h=>{
-          const grp = groupById(h.group_id);
-          const isBooked = h.rawdha_status==='booked';
-          return `<tr><td>${esc(h.full_name)}</td><td>${esc(grp?.name||'—')}</td><td>${rawdhaStatusLabel(h.rawdha_status)}</td><td>${isBooked&&h.rawdha_date?formatDateDisplay(h.rawdha_date):'—'}</td><td>${isBooked&&h.rawdha_time?esc(h.rawdha_time):'—'}</td></tr>`;
-        }).join('') || `<tr><td colspan="5">No pilgrims yet.</td></tr>`}
+        ${rows.map(e=>{
+          const isBooked = e.rawdha_status==='booked';
+          return `<tr><td>${esc(e.full_name)}${e.kind==='helper'?' (Helper)':''}</td><td>${esc(e.groupLabel||'—')}</td><td>${rawdhaStatusLabel(e.rawdha_status)}</td><td>${isBooked&&e.rawdha_date?formatDateDisplay(e.rawdha_date):'—'}</td><td>${isBooked&&e.rawdha_time?esc(e.rawdha_time):'—'}</td></tr>`;
+        }).join('') || `<tr><td colspan="5">No one yet.</td></tr>`}
       </tbody>
     </table>
   `;
@@ -2355,11 +2379,10 @@ function exportRawdhaXlsx(){
   const aoa = [
     ['Rawdha Bookings', bus ? busSelectLabel(bus) : 'All buses', todayIso()],
     [],
-    ['Pilgrim','Group','Status','Date','Time'],
-    ...rows.map(h=>{
-      const grp = groupById(h.group_id);
-      const isBooked = h.rawdha_status==='booked';
-      return [h.full_name, grp?.name||'', rawdhaStatusLabel(h.rawdha_status), isBooked&&h.rawdha_date?h.rawdha_date:'', isBooked&&h.rawdha_time?h.rawdha_time:''];
+    ['Name','Group','Status','Date','Time'],
+    ...rows.map(e=>{
+      const isBooked = e.rawdha_status==='booked';
+      return [e.full_name + (e.kind==='helper'?' (Helper)':''), e.groupLabel||'', rawdhaStatusLabel(e.rawdha_status), isBooked&&e.rawdha_date?e.rawdha_date:'', isBooked&&e.rawdha_time?e.rawdha_time:''];
     })
   ];
   const filenameSuffix = bus ? `-${bus.bus_number.replace(/\s+/g,'-')}` : '';
@@ -4315,23 +4338,24 @@ function renderModal(){
       </form>
     `;
   } else if(type==='rawdhaQuickUpdate'){
-    const h = data;
+    const record = data.kind==='helper' ? state.busHelpers.find(x=>x.id===data.id) : state.hajis.find(x=>x.id===data.id);
+    const displayName = record ? (data.kind==='helper' ? busHelperEntryLabel(record) : record.full_name) : '';
     body = `
-      <h3>${esc(h.full_name)}</h3>
+      <h3>${esc(displayName)}</h3>
       <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Rawdha booking status (Nusuk app)</p>
-      <form onsubmit="saveRawdhaQuickUpdate(event, '${h.id}')">
+      <form onsubmit="saveRawdhaQuickUpdate(event, '${data.kind}', '${data.id}')">
         <div class="field"><label>Status</label>
           ${customSelectHtml({
             name: 'rawdha_status',
             options: [{value:'not_booked', label:'Not booked yet'}, {value:'booked', label:'Booked'}, {value:'visited_recently', label:'Visited within 1 year (exempt)'}],
-            value: h.rawdha_status||'not_booked',
+            value: record?.rawdha_status||'not_booked',
             searchable: false,
             onChange: 'toggleRawdhaFields(this)'
           })}
         </div>
-        <div class="two-col rawdha-fields" style="display:${h.rawdha_status==='booked'?'grid':'none'};margin-top:-6px;">
-          <div class="field"><label>Confirmed date</label>${customDateHtml({ name:'rawdha_date', value: h.rawdha_date||'' })}</div>
-          <div class="field"><label>Confirmed time slot</label>${rawdhaTimeSelectHtml(h.rawdha_time||'')}</div>
+        <div class="two-col rawdha-fields" style="display:${record?.rawdha_status==='booked'?'grid':'none'};margin-top:-6px;">
+          <div class="field"><label>Confirmed date</label>${customDateHtml({ name:'rawdha_date', value: record?.rawdha_date||'' })}</div>
+          <div class="field"><label>Confirmed time slot</label>${rawdhaTimeSelectHtml(record?.rawdha_time||'')}</div>
         </div>
         <div style="display:flex;gap:8px;margin-top:16px;">
           <button type="submit" class="primary" style="flex:1">Save</button>
