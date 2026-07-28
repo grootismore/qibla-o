@@ -65,6 +65,7 @@
   .pill.ok{background:#e0ecdf;color:var(--ok);}
   .pill.warn{background:#f5e6cf;color:var(--gold);}
   .pill.bad{background:#f3ded9;color:var(--danger);}
+  .pill.info{background:#dbe6e5;color:var(--teal-2);}
   .offline-banner{background:#f5e6cf;color:#5b4419;font-size:12.5px;font-weight:600;padding:9px 14px;border-radius:8px;margin-bottom:16px;text-align:center;}
   #app{min-height:100vh;display:flex;}
   #sidebar{width:210px;background:var(--teal);color:var(--sand);padding:22px 14px;flex-shrink:0;display:flex;flex-direction:column;position:relative;}
@@ -448,7 +449,7 @@ let state = {
   groupBusCounts: new Map(), // group_id -> bus count, across ALL groups
   hajisSearchQuery: '',
   rawdhaSearchQuery: '',
-  rawdhaStatusFilter: 'all', // 'all' | 'booked' | 'not_booked'
+  rawdhaStatusFilter: 'all', // 'all' | 'booked' | 'not_booked' | 'visited_recently'
   rawdhaBusFilter: '', // '' = all buses, else a bus id
   staffSearchQuery: '',
 };
@@ -2090,7 +2091,7 @@ function renderHajis(){
         return `
         <div class="summary-row" data-search="${esc(searchText)}" onclick="openModal('hajiDetail', hajiById('${h.id}'))">
           <div>
-            <div class="summary-name">${esc(h.full_name)} ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''} ${h.rawdha_status==='booked'?'<span class="pill ok">Rawdha booked</span>':''}</div>
+            <div class="summary-name">${esc(h.full_name)} ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''} ${h.rawdha_status==='booked'?'<span class="pill ok">Rawdha booked</span>':''} ${h.rawdha_status==='visited_recently'?'<span class="pill info">Rawdha: visited recently</span>':''}</div>
             <div class="summary-sub">${hajiSummaryLine(h, maps)}</div>
           </div>
           <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
@@ -2174,6 +2175,15 @@ async function saveHaji(e, id){
 // Rawdha visits (in the Prophet's Mosque, Madinah) are now booked individually per pilgrim
 // through the Nusuk app. This view lets staff track, at a glance, who has a confirmed slot and
 // who still needs to book, and update a pilgrim's status quickly without opening the full edit form.
+// "visited_recently" is a pilgrim who's exempt from booking because they already visited within
+// the last year -- distinct from "not_booked" (still needs to), so it isn't counted as outstanding.
+const RAWDHA_STATUS_LABELS = { not_booked: 'Not booked', booked: 'Booked', visited_recently: 'Visited within 1 year' };
+function rawdhaStatusLabel(status){ return RAWDHA_STATUS_LABELS[status] || RAWDHA_STATUS_LABELS.not_booked; }
+function rawdhaStatusPillClass(status){
+  if(status==='booked') return 'ok';
+  if(status==='visited_recently') return 'info';
+  return 'warn';
+}
 function setRawdhaStatusFilter(filter){
   state.rawdhaStatusFilter = filter;
   render();
@@ -2205,14 +2215,16 @@ function rawdhaFilteredHajis(){
   const base = rawdhaBusFilteredHajis();
   let rows = base;
   if(state.rawdhaStatusFilter==='booked') rows = base.filter(h=>h.rawdha_status==='booked');
-  else if(state.rawdhaStatusFilter==='not_booked') rows = base.filter(h=>h.rawdha_status!=='booked');
+  else if(state.rawdhaStatusFilter==='not_booked') rows = base.filter(h=>h.rawdha_status==='not_booked');
+  else if(state.rawdhaStatusFilter==='visited_recently') rows = base.filter(h=>h.rawdha_status==='visited_recently');
   return [...rows].sort(compareHajisByGroupThenName);
 }
 function renderRawdhaBookings(){
   const busScoped = rawdhaBusFilteredHajis();
   const total = busScoped.length;
   const booked = busScoped.filter(h=>h.rawdha_status==='booked').length;
-  const notBooked = total - booked;
+  const visitedRecently = busScoped.filter(h=>h.rawdha_status==='visited_recently').length;
+  const notBooked = total - booked - visitedRecently;
   const rows = rawdhaFilteredHajis();
   return `
     <div class="toolbar">
@@ -2223,6 +2235,7 @@ function renderRawdhaBookings(){
       <div class="card"><div class="stat-label">${state.rawdhaBusFilter?'Pilgrims on this bus':'Total pilgrims'}</div><div class="stat-value">${total}</div></div>
       <div class="card"><div class="stat-label">Rawdha booked</div><div class="stat-value" style="color:#3D6B4C">${booked}</div></div>
       <div class="card"><div class="stat-label">Not booked yet</div><div class="stat-value" style="color:${notBooked?'#9B3A2E':'#3D6B4C'}">${notBooked}</div></div>
+      <div class="card"><div class="stat-label">Visited within 1 year</div><div class="stat-value" style="color:var(--teal-2)">${visitedRecently}</div></div>
     </div>
     <div class="field" style="margin-bottom:12px;">
       <label>Filter by bus <span style="font-weight:400;text-transform:none;color:#8a8168;">(handy for checking bookings on the way to Madinah)</span></label>
@@ -2233,15 +2246,14 @@ function renderRawdhaBookings(){
         onChange: 'setRawdhaBusFilter(this.value)'
       })}
     </div>
-    <div class="two-col" style="margin-bottom:12px;">
-      <div class="field" style="margin-bottom:0;">
-        <input id="rawdha-search" placeholder="Search by name or group…" value="${esc(state.rawdhaSearchQuery||'')}" oninput="filterRawdhaList(this.value)"/>
-      </div>
-      <div style="display:flex;gap:6px;">
-        <button class="${state.rawdhaStatusFilter==='all'?'primary':'ghost'}" style="flex:1" onclick="setRawdhaStatusFilter('all')">All</button>
-        <button class="${state.rawdhaStatusFilter==='booked'?'primary':'ghost'}" style="flex:1" onclick="setRawdhaStatusFilter('booked')">Booked</button>
-        <button class="${state.rawdhaStatusFilter==='not_booked'?'primary':'ghost'}" style="flex:1" onclick="setRawdhaStatusFilter('not_booked')">Not booked</button>
-      </div>
+    <div class="field" style="margin-bottom:12px;">
+      <input id="rawdha-search" placeholder="Search by name or group…" value="${esc(state.rawdhaSearchQuery||'')}" oninput="filterRawdhaList(this.value)"/>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="${state.rawdhaStatusFilter==='all'?'primary':'ghost'}" style="flex:1;min-width:80px;" onclick="setRawdhaStatusFilter('all')">All</button>
+      <button class="${state.rawdhaStatusFilter==='booked'?'primary':'ghost'}" style="flex:1;min-width:80px;" onclick="setRawdhaStatusFilter('booked')">Booked</button>
+      <button class="${state.rawdhaStatusFilter==='not_booked'?'primary':'ghost'}" style="flex:1;min-width:80px;" onclick="setRawdhaStatusFilter('not_booked')">Not booked</button>
+      <button class="${state.rawdhaStatusFilter==='visited_recently'?'primary':'ghost'}" style="flex:1;min-width:80px;" onclick="setRawdhaStatusFilter('visited_recently')">Visited recently</button>
     </div>
     <div class="summary-list" id="rawdha-list">
       ${rows.map(h=>{
@@ -2251,7 +2263,7 @@ function renderRawdhaBookings(){
         return `
         <div class="summary-row" data-search="${esc(searchText)}">
           <div>
-            <div class="summary-name">${esc(h.full_name)} <span class="pill ${isBooked?'ok':'warn'}">${isBooked?'Booked':'Not booked'}</span></div>
+            <div class="summary-name">${esc(h.full_name)} <span class="pill ${rawdhaStatusPillClass(h.rawdha_status)}">${rawdhaStatusLabel(h.rawdha_status)}</span></div>
             <div class="summary-sub">${esc(grp?.name||'—')}${isBooked?` · ${h.rawdha_date?formatDateDisplay(h.rawdha_date):'—'}${h.rawdha_time?` · ${esc(h.rawdha_time)}`:''}`:''}</div>
           </div>
           <button class="ghost" onclick="openModal('rawdhaQuickUpdate', hajiById('${h.id}'))">Update</button>
@@ -2291,13 +2303,19 @@ async function saveRawdhaQuickUpdate(e, hajiId){
   render();
   showNotice('Rawdha booking updated.', 'success');
 }
+// Sort order for reports: still-outstanding pilgrims first (most actionable), then confirmed
+// bookings, then exempt/already-visited pilgrims last (nothing left to do for them).
+const RAWDHA_STATUS_SORT_PRIORITY = { not_booked: 0, booked: 1, visited_recently: 2 };
+function compareByRawdhaStatusThenGroup(a,b){
+  const pa = RAWDHA_STATUS_SORT_PRIORITY[a.rawdha_status] ?? 0;
+  const pb = RAWDHA_STATUS_SORT_PRIORITY[b.rawdha_status] ?? 0;
+  if(pa !== pb) return pa - pb;
+  return compareHajisByGroupThenName(a,b);
+}
 function rawdhaReportBodyHtml(){
   const total = state.hajis.length;
   const booked = state.hajis.filter(h=>h.rawdha_status==='booked').length;
-  const rows = [...state.hajis].sort((a,b)=>{
-    if(a.rawdha_status===b.rawdha_status) return compareHajisByGroupThenName(a,b);
-    return a.rawdha_status==='booked' ? 1 : -1; // not-booked pilgrims first, as the actionable list
-  });
+  const rows = [...state.hajis].sort(compareByRawdhaStatusThenGroup);
   return `
     <h1>Qibla MV — Rawdha Bookings</h1>
     <div class="sub">Issued ${todayIso()} · ${booked} of ${total} pilgrims booked</div>
@@ -2307,7 +2325,7 @@ function rawdhaReportBodyHtml(){
         ${rows.map(h=>{
           const grp = groupById(h.group_id);
           const isBooked = h.rawdha_status==='booked';
-          return `<tr><td>${esc(h.full_name)}</td><td>${esc(grp?.name||'—')}</td><td>${isBooked?'Booked':'Not booked'}</td><td>${isBooked&&h.rawdha_date?formatDateDisplay(h.rawdha_date):'—'}</td><td>${isBooked&&h.rawdha_time?esc(h.rawdha_time):'—'}</td></tr>`;
+          return `<tr><td>${esc(h.full_name)}</td><td>${esc(grp?.name||'—')}</td><td>${rawdhaStatusLabel(h.rawdha_status)}</td><td>${isBooked&&h.rawdha_date?formatDateDisplay(h.rawdha_date):'—'}</td><td>${isBooked&&h.rawdha_time?esc(h.rawdha_time):'—'}</td></tr>`;
         }).join('') || `<tr><td colspan="5">No pilgrims yet.</td></tr>`}
       </tbody>
     </table>
@@ -2317,10 +2335,7 @@ function exportRawdhaPdf(){
   exportHtmlToPdf('Rawdha Bookings', rawdhaReportBodyHtml());
 }
 function exportRawdhaXlsx(){
-  const rows = [...state.hajis].sort((a,b)=>{
-    if(a.rawdha_status===b.rawdha_status) return compareHajisByGroupThenName(a,b);
-    return a.rawdha_status==='booked' ? 1 : -1;
-  });
+  const rows = [...state.hajis].sort(compareByRawdhaStatusThenGroup);
   const aoa = [
     ['Rawdha Bookings', todayIso()],
     [],
@@ -2328,7 +2343,7 @@ function exportRawdhaXlsx(){
     ...rows.map(h=>{
       const grp = groupById(h.group_id);
       const isBooked = h.rawdha_status==='booked';
-      return [h.full_name, grp?.name||'', isBooked?'Booked':'Not booked', isBooked&&h.rawdha_date?h.rawdha_date:'', isBooked&&h.rawdha_time?h.rawdha_time:''];
+      return [h.full_name, grp?.name||'', rawdhaStatusLabel(h.rawdha_status), isBooked&&h.rawdha_date?h.rawdha_date:'', isBooked&&h.rawdha_time?h.rawdha_time:''];
     })
   ];
   exportRowsToXlsx(`Rawdha-Bookings-${todayIso()}.xlsx`, 'Rawdha Bookings', aoa);
@@ -4156,7 +4171,7 @@ function renderModal(){
         ${detailRow('Q number', esc(h.q_number||'—'))}
         ${detailRow('Room', room?`${esc(room.room_number)} (${titleCase(room.hotel_leg)})`:'—')}
         ${detailRow('Bus', bus?`${esc(bus.bus_number)} (${titleCase(bus.leg.replace(/_/g,' '))}${busTripLabel(bus)?` · ${esc(busTripLabel(bus))}`:''})`:'—')}
-        ${detailRow('Rawdha booking', h.rawdha_status==='booked' ? `<span class="pill ok">Booked${h.rawdha_date?` — ${formatDateDisplay(h.rawdha_date)}`:''}${h.rawdha_time?` · ${esc(h.rawdha_time)}`:''}</span>` : '<span class="pill warn">Not booked yet</span>')}
+        ${detailRow('Rawdha booking', `<span class="pill ${rawdhaStatusPillClass(h.rawdha_status)}">${rawdhaStatusLabel(h.rawdha_status)}${h.rawdha_status==='booked'&&h.rawdha_date?` — ${formatDateDisplay(h.rawdha_date)}`:''}${h.rawdha_status==='booked'&&h.rawdha_time?` · ${esc(h.rawdha_time)}`:''}</span>`)}
         ${detailRow('Notes', esc(h.notes||'—'))}
       </div>
       <div style="display:flex;gap:8px;margin-top:16px;">
@@ -4221,7 +4236,7 @@ function renderModal(){
         <div class="field"><label>Rawdha booking (Nusuk app)</label>
           ${customSelectHtml({
             name: 'rawdha_status',
-            options: [{value:'not_booked', label:'Not booked yet'}, {value:'booked', label:'Booked'}],
+            options: [{value:'not_booked', label:'Not booked yet'}, {value:'booked', label:'Booked'}, {value:'visited_recently', label:'Visited within 1 year (exempt)'}],
             value: data.rawdha_status||'not_booked',
             searchable: false,
             onChange: 'toggleRawdhaFields(this)'
@@ -4247,7 +4262,7 @@ function renderModal(){
         <div class="field"><label>Status</label>
           ${customSelectHtml({
             name: 'rawdha_status',
-            options: [{value:'not_booked', label:'Not booked yet'}, {value:'booked', label:'Booked'}],
+            options: [{value:'not_booked', label:'Not booked yet'}, {value:'booked', label:'Booked'}, {value:'visited_recently', label:'Visited within 1 year (exempt)'}],
             value: h.rawdha_status||'not_booked',
             searchable: false,
             onChange: 'toggleRawdhaFields(this)'
