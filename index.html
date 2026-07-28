@@ -911,8 +911,16 @@ function hajisForTrip(tripTypeId){
   const hajiIds = new Set(state.payments.filter(p=>paidPaymentIds.has(p.id)).map(p=>p.haji_id));
   return state.hajis.filter(h=>hajiIds.has(h.id));
 }
+// A bus helper can be a registered staff member (helper_staff_id) or a manually-typed name
+// (helper_name) for people who aren't in the Staff list, e.g. kitchen staff. Only one is ever set.
+function busHelperLabel(bus){
+  if(bus.helper_staff_id){ const s = staffById(bus.helper_staff_id); return s ? `${s.full_name} (${roleLabel(s.role)})` : null; }
+  if(bus.helper_name) return bus.helper_name;
+  return null;
+}
+function busHasHelper(bus){ return !!(bus.helper_staff_id || bus.helper_name); }
 function busRemainingCapacity(bus){
-  return bus.capacity - busOccupants(bus.id).length - (bus.helper_staff_id?1:0);
+  return bus.capacity - busOccupants(bus.id).length - (busHasHelper(bus)?1:0);
 }
 function familyBusSplit(familyCode, tripTypeId, excludeBusId){
   if(!familyCode) return [];
@@ -1882,6 +1890,10 @@ function toggleHotelOther(sel){
   if(!otherInput) return;
   otherInput.style.display = sel.value==='other' ? 'block' : 'none';
 }
+function toggleBusHelperOther(sel){
+  const otherInput = sel.closest('form')?.querySelector('input[name="helper_name_other"]');
+  if(otherInput) otherInput.style.display = sel.value==='other' ? 'block' : 'none';
+}
 function resolveHotelName(form, leg){
   const sel = form[`${leg}_hotel_select`];
   if(!sel) return '';
@@ -2298,7 +2310,7 @@ const BULK_IMPORT_DEFS = {
   buses: {
     table: 'buses',
     title: 'Bulk import buses',
-    hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Helper name, Capacity, Trip name (ziyarat only)</span><br/>Helper is matched against staff already added (unmatched names are left blank). A trip name that doesn\'t exist yet is created automatically — the helper counts toward capacity.',
+    hint: 'One per line: <span class="mono">Leg (airport_transfer/mecca_madinah/ziyarat), Bus number, Helper name, Capacity, Trip name (ziyarat only)</span><br/>Helper is matched against staff already added; if the name doesn\'t match anyone (e.g. kitchen staff), it\'s kept as a plain name instead. A trip name that doesn\'t exist yet is created automatically — the helper counts toward capacity.',
     placeholder: 'ziyarat, B-12, Ali Hassan, 45, Hira',
     parse(line){
       const [leg, bus_number, helperName, capacity, tripName] = parseCsvLine(line);
@@ -2306,7 +2318,7 @@ const BULK_IMPORT_DEFS = {
       const legs = ['airport_transfer','mecca_madinah','ziyarat'];
       const normalizedLeg = legs.includes((leg||'').toLowerCase())?leg.toLowerCase():'airport_transfer';
       const helper = helperName ? state.staffList.find(s=>s.full_name.toLowerCase()===helperName.toLowerCase()) : null;
-      return { leg: normalizedLeg, bus_number, helper_staff_id: helper?helper.id:null, capacity: parseInt(capacity||'45'), _tripName: normalizedLeg==='ziyarat' ? (tripName||null) : null };
+      return { leg: normalizedLeg, bus_number, helper_staff_id: helper?helper.id:null, helper_name: (!helper && helperName) ? helperName : null, capacity: parseInt(capacity||'45'), _tripName: normalizedLeg==='ziyarat' ? (tripName||null) : null };
     }
   },
   hotels: {
@@ -2601,8 +2613,8 @@ async function toggleRoomAssign(roomId, hajiId, assign){
 function busCardsHtml(buses, leg){
   return buses.map(b=>{
     const occ = busOccupants(b.id);
-    const helper = b.helper_staff_id ? staffById(b.helper_staff_id) : null;
-    const total = occ.length + (helper?1:0);
+    const helperLabel = busHelperLabel(b);
+    const total = occ.length + (busHasHelper(b)?1:0);
     const over = total > b.capacity;
     const trip = leg==='ziyarat' ? state.tripTypes.find(t=>t.id===b.trip_type_id) : null;
     return `<div class="card">
@@ -2611,7 +2623,7 @@ function busCardsHtml(buses, leg){
         <span class="pill ${over?'bad':'ok'}">${total}/${b.capacity}</span>
       </div>
       ${trip ? `<div style="margin:4px 0;"><span class="pill warn">${esc(trip.name)}</span></div>` : ''}
-      <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Helper: ${helper?`${esc(helper.full_name)} (${esc(roleLabel(helper.role))})`:'—'}</div>
+      <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Helper: ${helperLabel?esc(helperLabel):'—'}</div>
       <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,total/b.capacity*100)}%"></div></div>
       <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('assignBus',{busId:'${b.id}'})" ${can('manageBuses')?'':'disabled'}>Assign pilgrims</button>
       ${can('manageBuses') ? `
@@ -2657,9 +2669,12 @@ async function saveBus(e, id){
   e.preventDefault();
   if(!requireOnline()) return;
   const f = e.target;
+  const helperIsOther = f.helper_staff_id.value==='other';
   const payload = {
     bus_number: f.bus_number.value, leg: f.leg.value,
-    helper_staff_id: f.helper_staff_id.value||null, capacity: parseInt(f.capacity.value||'45'),
+    helper_staff_id: helperIsOther ? null : (f.helper_staff_id.value||null),
+    helper_name: helperIsOther ? (f.helper_name_other.value.trim()||null) : null,
+    capacity: parseInt(f.capacity.value||'45'),
     trip_type_id: f.leg.value==='ziyarat' ? (f.trip_type_id.value||null) : null
   };
   let error;
@@ -4305,10 +4320,12 @@ function renderModal(){
           <label>Main helper / Sheikh</label>
           ${customSelectHtml({
             name: 'helper_staff_id',
-            options: [{value:'',label:'— None —'}, ...state.staffList.map(s=>({value:s.id, label:`${s.full_name} (${roleLabel(s.role)})`}))],
-            value: data.helper_staff_id||''
+            options: [{value:'',label:'— None —'}, ...state.staffList.map(s=>({value:s.id, label:`${s.full_name} (${roleLabel(s.role)})`})), {value:'other',label:'Other (type manually)'}],
+            value: data.helper_staff_id || (data.helper_name?'other':''),
+            onChange: 'toggleBusHelperOther(this)'
           })}
-          <p style="font-size:11px;color:#8a8168;margin-top:4px;">Counts as one passenger toward capacity.</p>
+          <input name="helper_name_other" placeholder="Helper's name" style="margin-top:6px;${data.helper_name?'':'display:none;'}" value="${esc(data.helper_name||'')}"/>
+          <p style="font-size:11px;color:#8a8168;margin-top:4px;">Not in the staff list? Choose "Other" and type their name — e.g. kitchen staff. Counts as one passenger toward capacity.</p>
         </div>
         <div class="field"><label>Capacity</label><input type="number" name="capacity" value="${data.capacity??45}"/></div>
         <div style="display:flex;gap:8px;margin-top:16px;">
@@ -4321,7 +4338,7 @@ function renderModal(){
     const bus = state.buses.find(b=>b.id===data.busId);
     const occIds = new Set(busOccupants(bus.id).map(h=>h.id));
     const tripLabel = busTripLabel(bus);
-    const helper = bus.helper_staff_id ? staffById(bus.helper_staff_id) : null;
+    const helperLabel = busHelperLabel(bus);
     const basePool = bus.trip_type_id ? hajisForTrip(bus.trip_type_id) : state.hajis;
     const pool = busAssignablePool(bus);
     const excludedCount = basePool.length - pool.length;
@@ -4337,7 +4354,7 @@ function renderModal(){
     body = `
       <h3>Assign to Bus ${esc(bus.bus_number)}${tripLabel?` — ${esc(tripLabel)}`:''}</h3>
       <p style="font-size:12px;color:#6b6252;margin-bottom:12px;">
-        Helper: ${helper?esc(helper.full_name):'—'} · ${occIds.size + (helper?1:0)}/${bus.capacity} seats used
+        Helper: ${helperLabel?esc(helperLabel):'—'} · ${occIds.size + (busHasHelper(bus)?1:0)}/${bus.capacity} seats used
         ${bus.trip_type_id ? ` · Showing pilgrims booked for ${esc(tripLabel||'this trip')}` : ''}
       </p>
       ${excludedCount ? `<p style="font-size:11px;color:#8a8168;margin:-6px 0 12px;">${excludedCount} pilgrim${excludedCount===1?'':'s'} already on another bus for ${bus.trip_type_id?`"${esc(tripLabel||'this trip')}"`:'this leg'} and left off this list.</p>` : ''}
