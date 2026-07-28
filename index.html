@@ -449,6 +449,8 @@ let state = {
   hajisSearchQuery: '',
   rawdhaSearchQuery: '',
   rawdhaStatusFilter: 'all', // 'all' | 'booked' | 'not_booked'
+  rawdhaBusFilter: '', // '' = all buses, else a bus id
+  staffSearchQuery: '',
 };
 
 // ---------- VIEW-STATE PERSISTENCE (so a refresh doesn't dump you back on Dashboard) ----------
@@ -1581,7 +1583,7 @@ function render(){
   else if(state.view==='tripSummary') content.innerHTML = renderTripSummary();
   else if(state.view==='tripDateReport') content.innerHTML = renderTripDateReport();
   else if(state.view==='todaySalesSummary') content.innerHTML = renderTodaySalesSummary();
-  else if(state.view==='staff') { content.innerHTML = renderStaff(); if(enteringStaffView && navigator.onLine) loadStaffList(); }
+  else if(state.view==='staff') { content.innerHTML = renderStaff(); if(enteringStaffView && navigator.onLine) loadStaffList(); if(state.staffSearchQuery) filterStaffList(state.staffSearchQuery); }
   else if(state.view==='settings') content.innerHTML = renderSettings();
   lastRenderedView = state.view;
   persistViewState();
@@ -2132,14 +2134,30 @@ function setRawdhaStatusFilter(filter){
   state.rawdhaStatusFilter = filter;
   render();
 }
+function setRawdhaBusFilter(busId){
+  state.rawdhaBusFilter = busId;
+  render();
+}
+function busSelectLabel(b){
+  return `Bus ${b.bus_number} — ${titleCase(b.leg.replace(/_/g,' '))}${busTripLabel(b)?` · ${busTripLabel(b)}`:''}`;
+}
+// Scoped by bus only (used for the stat cards, so they reflect "everyone on this bus" even
+// while the status buttons/search further narrow which rows are actually listed below).
+function rawdhaBusFilteredHajis(){
+  if(!state.rawdhaBusFilter) return state.hajis;
+  const busMap = hajiBusMap();
+  return state.hajis.filter(h=>busMap.get(h.id)?.id===state.rawdhaBusFilter);
+}
 function rawdhaFilteredHajis(){
-  if(state.rawdhaStatusFilter==='booked') return state.hajis.filter(h=>h.rawdha_status==='booked');
-  if(state.rawdhaStatusFilter==='not_booked') return state.hajis.filter(h=>h.rawdha_status!=='booked');
-  return state.hajis;
+  const base = rawdhaBusFilteredHajis();
+  if(state.rawdhaStatusFilter==='booked') return base.filter(h=>h.rawdha_status==='booked');
+  if(state.rawdhaStatusFilter==='not_booked') return base.filter(h=>h.rawdha_status!=='booked');
+  return base;
 }
 function renderRawdhaBookings(){
-  const total = state.hajis.length;
-  const booked = state.hajis.filter(h=>h.rawdha_status==='booked').length;
+  const busScoped = rawdhaBusFilteredHajis();
+  const total = busScoped.length;
+  const booked = busScoped.filter(h=>h.rawdha_status==='booked').length;
   const notBooked = total - booked;
   const rows = rawdhaFilteredHajis();
   return `
@@ -2148,9 +2166,18 @@ function renderRawdhaBookings(){
       <button class="ghost" onclick="exportRawdhaXlsx()">Export Excel</button>
     </div>
     <div class="grid grid-4" style="margin-bottom:16px;">
-      <div class="card"><div class="stat-label">Total pilgrims</div><div class="stat-value">${total}</div></div>
+      <div class="card"><div class="stat-label">${state.rawdhaBusFilter?'Pilgrims on this bus':'Total pilgrims'}</div><div class="stat-value">${total}</div></div>
       <div class="card"><div class="stat-label">Rawdha booked</div><div class="stat-value" style="color:#3D6B4C">${booked}</div></div>
       <div class="card"><div class="stat-label">Not booked yet</div><div class="stat-value" style="color:${notBooked?'#9B3A2E':'#3D6B4C'}">${notBooked}</div></div>
+    </div>
+    <div class="field" style="margin-bottom:12px;">
+      <label>Filter by bus <span style="font-weight:400;text-transform:none;color:#8a8168;">(handy for checking bookings on the way to Madinah)</span></label>
+      ${customSelectHtml({
+        id: 'rawdha-bus-filter',
+        options: [{value:'', label:'— All buses —'}, ...state.buses.map(b=>({value:b.id, label:busSelectLabel(b)}))],
+        value: state.rawdhaBusFilter||'',
+        onChange: 'setRawdhaBusFilter(this.value)'
+      })}
     </div>
     <div class="two-col" style="margin-bottom:12px;">
       <div class="field" style="margin-bottom:0;">
@@ -3649,10 +3676,25 @@ async function loadStaffList(){
   state.staffList = data || [];
   if(state.view==='staff') render();
 }
+function filterStaffList(query){
+  state.staffSearchQuery = query;
+  const q = query.trim().toLowerCase();
+  let visibleCount = 0;
+  document.querySelectorAll('#staff-table tbody tr[data-search]').forEach(row=>{
+    const match = !q || (row.dataset.search||'').includes(q);
+    row.style.display = match ? '' : 'none';
+    if(match) visibleCount++;
+  });
+  const noResults = document.getElementById('staff-no-results');
+  if(noResults) noResults.style.display = (q && visibleCount===0) ? '' : 'none';
+}
 function renderStaff(){
   return `
+    <div class="field" style="margin-bottom:12px;max-width:420px;">
+      <input id="staff-search" placeholder="Search by name or role…" value="${esc(state.staffSearchQuery||'')}" oninput="filterStaffList(this.value)"/>
+    </div>
     <div class="card table-wrap">
-      <table>
+      <table id="staff-table">
         <thead><tr><th>Name</th><th>Role</th></tr></thead>
         <tbody>
           ${state.staffList.map(s=>{
@@ -3663,8 +3705,9 @@ function renderStaff(){
             const options = (state.myRole==='super_admin' || locked)
               ? [['super_admin','Qibla Owners'],['admin','Qibla Admins'],['agent','Helper'],['accountant','Accountant']]
               : [['agent','Helper'],['accountant','Accountant']];
+            const searchText = [s.full_name, roleLabel(s.role)].filter(Boolean).join(' ').toLowerCase();
             return `
-            <tr>
+            <tr data-search="${esc(searchText)}">
               <td>${esc(s.full_name||'—')} ${isSelf?'<span class="pill ok">You</span>':''} ${s.role==='super_admin'?'<span class="pill warn">Qibla Owners</span>':''}</td>
               <td data-label="Role">
                 ${customSelectHtml({
@@ -3678,6 +3721,7 @@ function renderStaff(){
           `;}).join('') || `<tr><td colspan="2" class="empty">No staff accounts yet.</td></tr>`}
         </tbody>
       </table>
+      <div id="staff-no-results" class="empty" style="display:none;">No matches found.</div>
     </div>
   `;
 }
