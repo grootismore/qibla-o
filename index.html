@@ -2693,7 +2693,7 @@ function exportTodaySalesPdf(){
 // PDF: reuse the browser's own print-to-PDF, same pattern as printReceipt -- no extra dependency,
 // works the same everywhere the app already prints from.
 const REPORT_STYLE = `
-  body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:32px;}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:32px;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
   h1{font-size:20px;margin-bottom:2px;color:#0E3B3A;}
   h2{font-size:15px;margin:18px 0 8px;color:#0E3B3A;}
   .sub{color:#6b6252;font-size:12px;margin-bottom:18px;}
@@ -2705,7 +2705,7 @@ const REPORT_STYLE = `
 // Same rules as REPORT_STYLE, but scoped under .report-capture for when this markup is rendered
 // into the live app document (for html2canvas) rather than an isolated print window.
 const REPORT_CAPTURE_STYLE = `
-  .report-capture{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:32px;background:#fff;}
+  .report-capture{font-family:'Helvetica Neue',Arial,sans-serif;color:#1C2321;padding:32px;background:#fff;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
   .report-capture h1{font-size:20px;margin-bottom:2px;color:#0E3B3A;}
   .report-capture h2{font-size:15px;margin:18px 0 8px;color:#0E3B3A;}
   .report-capture .sub{color:#6b6252;font-size:12px;margin-bottom:18px;}
@@ -2902,7 +2902,7 @@ function groupReceiptRowHtml(r, dashed){
 function groupReceiptSectionHeaderHtml(label, danger){
   const bg = danger ? '#f3ded9' : '#f2ecdd';
   const color = danger ? '#9B3A2E' : '#0E3B3A';
-  return `<tr><td colspan="6" style="background:${bg};color:${color};font-weight:700;text-transform:uppercase;font-size:11px;letter-spacing:.04em;padding:8px;">${esc(label)}</td></tr>`;
+  return `<tr><td colspan="6" style="background:${bg};color:${color};font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:.04em;padding:6px 8px;-webkit-text-size-adjust:100%;">${esc(label)}</td></tr>`;
 }
 function groupReceiptBodyHtml(groupId){
   const g = groupById(groupId);
