@@ -428,7 +428,7 @@ let state = {
   canInstall: false,
   hotels: [],
   roleSettings: [],
-  authMode: (function(){ try{ return localStorage.getItem('rihla_auth_mode')||'staff'; }catch(e){ return 'staff'; } })(), // 'staff' | 'haji'
+  authMode: (function(){ try{ return localStorage.getItem('rihla_auth_mode')||'haji'; }catch(e){ return 'haji'; } })(), // 'staff' | 'haji'
   isHaji: false,
   myHaji: null,
   myGroup: null,
@@ -706,28 +706,6 @@ async function signIn(email, password){
   }
   const { error } = await sb.auth.signInWithPassword({ email, password });
   if(error){ showNotice(error.message, 'error'); return; }
-}
-async function signUp(email, password, fullName){
-  if(!fullName?.trim() || !email?.trim() || !password){
-    showNotice('Fill in your name, email, and password to create an account.', 'error');
-    return;
-  }
-  const { data, error } = await sb.auth.signUp({ email, password });
-  if(error){ showNotice(error.message, 'error'); return; }
-  if(!data.session){
-    showNotice('Account created — check your email to confirm it, then sign in.', 'success');
-    return;
-  }
-  const { count } = await sb.from('staff').select('*', { count:'exact', head:true });
-  const role = count === 0 ? 'super_admin' : 'agent';
-  const { error: staffErr } = await sb.from('staff').insert({ id: data.user.id, full_name: fullName, role });
-  if(staffErr){
-    showNotice(`Your login was created, but we couldn't set up your access (${staffErr.message}). Ask an existing Qibla Admin to add you under Staff.`, 'error');
-    return;
-  }
-  showNotice(role==='super_admin'
-    ? "Account created — you're the first user, so you've been made Qibla Owners (system owner)."
-    : "Account created with basic access. A Qibla Admin can upgrade your role in Staff once you're set up.", 'success');
 }
 function hajiLoginEmail(passportNo){
   return (passportNo||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'') + '@hajis.rihla.local';
@@ -1628,31 +1606,26 @@ function renderOfflineNoCacheScreen(){
   `;
 }
 function renderAuth(){
+  const staffMode = state.authMode==='staff';
   root.innerHTML = `
     <div class="auth-wrap">
       <div class="auth-card">
         <h1>Qibla MV</h1>
         <div class="tagline">Umrah group operations</div>
-        <div style="display:flex;gap:8px;margin:14px 0 6px;">
-          <button class="${state.authMode==='staff'?'primary':'ghost'}" style="flex:1" onclick="setAuthMode('staff')">Staff</button>
-          <button class="${state.authMode==='haji'?'primary':'ghost'}" style="flex:1" onclick="setAuthMode('haji')">Pilgrim</button>
-        </div>
-        ${state.authMode==='staff' ? `
-          <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Sign in if you already have an account. New here? Create one below — the very first account on Qibla MV becomes the system owner; everyone after that starts with basic access until a Qibla Admin sets their role.</p>
-          <div class="field"><label>Full name (for new staff account)</label><input id="auth-name" placeholder="Your name" autocomplete="name"/></div>
+        ${staffMode ? `
+          <p style="font-size:12px;color:#8a8168;margin:14px 0;">Staff sign-in. Staff accounts are set up by a Qibla Admin or Qibla Owner — there's no self sign-up here.</p>
           <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" autofocus/></div>
           <div class="field"><label>Password</label><input id="auth-pass" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
-          <div style="display:flex;gap:8px;margin-top:16px;">
-            <button id="staff-signin-btn" class="primary" style="flex:1" onclick="doSignIn()">Sign in</button>
-            <button id="staff-signup-btn" class="gold" style="flex:1" onclick="doSignUp()">Create staff account</button>
-          </div>
+          <button id="staff-signin-btn" class="primary" style="width:100%;margin-top:6px;" onclick="doSignIn()">Sign in</button>
           <button id="forgot-pass-btn" class="link-btn" style="margin-top:12px;" onclick="withBusyButton('forgot-pass-btn','Sending…',()=>doForgotPassword())">Forgot password?</button>
+          <button class="link-btn" style="margin-top:6px;" onclick="setAuthMode('haji')">← Back to pilgrim sign-in</button>
         ` : `
-          <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Sign in with the passport number and phone number your group coordinator has on file for you.</p>
+          <p style="font-size:12px;color:#8a8168;margin:14px 0;">Sign in with the passport number and phone number your group coordinator has on file for you.</p>
           <div class="field"><label>Passport number</label><input id="haji-passport" placeholder="e.g. A1234567" autocomplete="off" autofocus/></div>
           <div class="field"><label>Phone number</label><input id="haji-phone" placeholder="Your registered phone number" autocomplete="tel"/></div>
           <button id="haji-signin-btn" class="primary" style="width:100%;margin-top:6px;" onclick="doHajiSignIn()">Sign in</button>
           <p style="font-size:11px;color:#8a8168;margin-top:12px;">Don't have login details? Ask your group coordinator.</p>
+          <button class="link-btn" style="margin-top:14px;" onclick="setAuthMode('staff')">Staff login</button>
         `}
         ${state.canInstall ? `<button class="ghost install-btn" onclick="installApp()">⭳ Install app</button>` : ''}
       </div>
@@ -1674,10 +1647,6 @@ async function withBusyButton(btnId, busyLabel, fn){
 function doSignIn(){
   withBusyButton('staff-signin-btn', 'Signing in…', () =>
     signIn(document.getElementById('auth-email').value, document.getElementById('auth-pass').value));
-}
-function doSignUp(){
-  withBusyButton('staff-signup-btn', 'Creating…', () =>
-    signUp(document.getElementById('auth-email').value, document.getElementById('auth-pass').value, document.getElementById('auth-name').value));
 }
 function doHajiSignIn(){
   withBusyButton('haji-signin-btn', 'Signing in…', () =>
@@ -2843,15 +2812,22 @@ async function addBusHelper(busId, staffId, helperName){
   openModal('busHelpers', {busId});
   showNotice('Helper added.', 'success');
 }
+function existingHelperNames(){
+  const names = new Set();
+  state.busHelpers.forEach(h=>{ if(!h.staff_id && h.helper_name?.trim()) names.add(h.helper_name.trim()); });
+  return [...names].sort((a,b)=>a.localeCompare(b));
+}
 function submitAddBusHelper(e, busId){
   e.preventDefault();
   const f = e.target;
   const sel = f.new_helper.value;
-  if(!sel){ showNotice('Choose a staff member or "Other".', 'error'); return; }
+  if(!sel){ showNotice('Choose a staff member, an existing helper, or "Other".', 'error'); return; }
   if(sel==='other'){
     const name = f.new_helper_other.value.trim();
     if(!name){ showNotice("Enter the helper's name.", 'error'); return; }
     addBusHelper(busId, null, name);
+  } else if(sel.startsWith('existing:')){
+    addBusHelper(busId, null, sel.slice('existing:'.length));
   } else {
     addBusHelper(busId, sel, null);
   }
@@ -3843,8 +3819,9 @@ function filterStaffList(query){
 }
 function renderStaff(){
   return `
-    <div class="field" style="margin-bottom:12px;max-width:420px;">
+    <div class="two-col" style="margin-bottom:12px;max-width:640px;align-items:center;">
       <input id="staff-search" placeholder="Search by name or role…" value="${esc(state.staffSearchQuery||'')}" oninput="filterStaffList(this.value)"/>
+      <button class="gold" onclick="openModal('addStaff', {})">+ Add staff</button>
     </div>
     <div class="card table-wrap">
       <table id="staff-table">
@@ -3882,6 +3859,21 @@ async function updateStaffRole(id, role){
   const { error } = await sb.from('staff').update({role}).eq('id', id);
   if(error){ showNotice(error.message, 'error'); }
   await loadStaffList();
+}
+async function saveAddStaff(e){
+  e.preventDefault();
+  if(!requireOnline()) return;
+  const f = e.target;
+  const { error } = await sb.rpc('admin_create_staff', {
+    p_full_name: f.full_name.value.trim(),
+    p_email: f.email.value.trim(),
+    p_password: f.password.value,
+    p_role: f.role.value,
+  });
+  if(error){ showNotice(error.message, 'error'); return; }
+  await loadStaffList();
+  closeModal();
+  showNotice('Staff login created.', 'success');
 }
 
 // ---------- SETTINGS ----------
@@ -4526,6 +4518,8 @@ function renderModal(){
     const bus = state.buses.find(b=>b.id===data.busId);
     const helpers = busHelpersFor(bus.id);
     const assignedStaffIds = new Set(helpers.map(h=>h.staff_id).filter(Boolean));
+    const assignedNames = new Set(helpers.map(h=>h.helper_name).filter(Boolean));
+    const availableExistingNames = existingHelperNames().filter(n=>!assignedNames.has(n));
     body = `
       <h3>Helpers — Bus ${esc(bus.bus_number)}</h3>
       <p style="font-size:12px;color:#6b6252;margin-bottom:12px;">Each helper counts as one passenger toward capacity.</p>
@@ -4542,15 +4536,16 @@ function renderModal(){
           ${customSelectHtml({
             name: 'new_helper',
             options: [
-              {value:'', label:'— Select staff —'},
+              {value:'', label:'— Select staff or helper —'},
               ...state.staffList.filter(s=>!assignedStaffIds.has(s.id)).map(s=>({value:s.id, label:`${s.full_name} (${roleLabel(s.role)})`})),
-              {value:'other', label:'Other (type manually)'}
+              ...availableExistingNames.map(n=>({value:'existing:'+n, label:`${n} (existing helper)`})),
+              {value:'other', label:'Other (type new name)'}
             ],
             value: '',
             onChange: 'toggleBusHelperOther(this)'
           })}
           <input name="new_helper_other" placeholder="Helper's name" style="margin-top:6px;display:none;"/>
-          <p style="font-size:11px;color:#8a8168;margin-top:4px;">Not in the staff list? Choose "Other" and type their name — e.g. kitchen staff.</p>
+          <p style="font-size:11px;color:#8a8168;margin-top:4px;">Not in the staff list or existing helpers? Choose "Other" and type their name — e.g. kitchen staff.</p>
         </div>
         <div style="display:flex;gap:8px;margin-top:12px;">
           <button type="submit" class="primary" style="flex:1">Add helper</button>
@@ -4651,6 +4646,24 @@ function renderModal(){
         <div class="field"><label>Notes</label><input name="notes"/></div>
         <div style="display:flex;gap:8px;margin-top:16px;">
           <button type="submit" class="primary" style="flex:1">Save</button>
+          <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
+    `;
+  } else if(type==='addStaff'){
+    const roleOptions = state.myRole==='super_admin'
+      ? [['agent','Helper'],['accountant','Accountant'],['admin','Qibla Admins'],['super_admin','Qibla Owners']]
+      : [['agent','Helper'],['accountant','Accountant']];
+    body = `
+      <h3>Add staff</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:14px;">Creates a login for this person directly — they don't need to sign up themselves.</p>
+      <form onsubmit="saveAddStaff(event)">
+        <div class="field"><label>Full name</label><input name="full_name" required autofocus/></div>
+        <div class="field"><label>Email</label><input name="email" type="email" placeholder="you@example.com" required/></div>
+        <div class="field"><label>Temporary password</label><input name="password" type="password" placeholder="At least 6 characters" required/></div>
+        <div class="field"><label>Role</label>${customSelectHtml({ name:'role', options: roleOptions.map(([v,l])=>({value:v,label:l})), searchable:false })}</div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="submit" class="primary" style="flex:1">Create login</button>
           <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
         </div>
       </form>
