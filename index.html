@@ -447,6 +447,8 @@ let state = {
   groupRoomCounts: new Map(), // group_id -> room count, across ALL groups
   groupBusCounts: new Map(), // group_id -> bus count, across ALL groups
   hajisSearchQuery: '',
+  rawdhaSearchQuery: '',
+  rawdhaStatusFilter: 'all', // 'all' | 'booked' | 'not_booked'
 };
 
 // ---------- VIEW-STATE PERSISTENCE (so a refresh doesn't dump you back on Dashboard) ----------
@@ -659,6 +661,7 @@ function icon(name, size){
     payments: '<rect x="2.5" y="4.5" width="15" height="11" rx="1.8"/><line x1="2.5" y1="8.5" x2="17.5" y2="8.5"/>',
     tripPayments: '<line x1="5.5" y1="3" x2="5.5" y2="17"/><path d="M5.5 4h9l-2.8 3 2.8 3h-9"/>',
     staff: '<path d="M10 2.5l5.5 2v4.5c0 4-2.3 6.3-5.5 6.8-3.2-.5-5.5-2.8-5.5-6.8V4.5l5.5-2z"/>',
+    rawdha: '<rect x="3" y="4" width="14" height="13" rx="1.5"/><line x1="3" y1="8" x2="17" y2="8"/><line x1="7" y1="2.5" x2="7" y2="5.5"/><line x1="13" y1="2.5" x2="13" y2="5.5"/><path d="M7 12.3l2 2 4-4.2"/>',
     settings: '<line x1="5" y1="3" x2="5" y2="17"/><circle cx="5" cy="7" r="1.8"/><line x1="10" y1="3" x2="10" y2="17"/><circle cx="10" cy="13" r="1.8"/><line x1="15" y1="3" x2="15" y2="17"/><circle cx="15" cy="9" r="1.8"/>',
     more: '<circle cx="4" cy="10" r="1.5"/><circle cx="10" cy="10" r="1.5"/><circle cx="16" cy="10" r="1.5"/>',
   };
@@ -669,6 +672,7 @@ const NAV_ITEM_DEFS = [
   { key:'dashboard', label:'Dashboard', activeViews:['dashboard'], onclick:"setView('dashboard')", permitted: ()=>true },
   { key:'groups', label:'Groups', activeViews:['groups'], onclick:"setView('groups')", permitted: (role)=>role==='admin'||role==='super_admin' },
   { key:'hajis', label:'Hajis', activeViews:['hajis'], onclick:"setView('hajis')", permitted: (role)=>canRole('manageHajis',role)||role==='accountant' },
+  { key:'rawdha', label:'Rawdha Bookings', activeViews:['rawdha'], onclick:"setView('rawdha')", permitted: (role)=>canRole('manageHajis',role) },
   { key:'rooms', label:'Rooms', activeViews:['rooms'], onclick:"setView('rooms')", permitted: (role)=>canRole('manageRooms',role) },
   { key:'buses', label:'Buses', activeViews:['buses'], onclick:"setView('buses')", permitted: (role)=>canRole('manageBuses',role) },
   { key:'payments', label:'Payments', activeViews:['payments','todaySalesSummary'], onclick:"setView('payments')", permitted: (role)=>canRole('managePayments',role)||role==='admin' },
@@ -1561,6 +1565,7 @@ function render(){
   if(state.view==='dashboard') content.innerHTML = renderDashboard();
   else if(state.view==='groups') content.innerHTML = renderGroups();
   else if(state.view==='hajis') { content.innerHTML = renderHajis(); if(state.hajisSearchQuery) filterHajisList(state.hajisSearchQuery); }
+  else if(state.view==='rawdha') { content.innerHTML = renderRawdhaBookings(); if(state.rawdhaSearchQuery) filterRawdhaList(state.rawdhaSearchQuery); }
   else if(state.view==='rooms') content.innerHTML = renderRooms();
   else if(state.view==='buses') content.innerHTML = renderBuses();
   else if(state.view==='payments') content.innerHTML = renderPayments();
@@ -1868,6 +1873,10 @@ function toggleNewGroupField(sel){
   const wrap = sel.closest('form')?.querySelector('.new-group-field');
   if(wrap) wrap.style.display = sel.value==='__new__' ? 'block' : 'none';
 }
+function toggleRawdhaFields(sel){
+  const wrap = sel.closest('form')?.querySelector('.rawdha-fields');
+  if(wrap) wrap.style.display = sel.value==='booked' ? 'grid' : 'none';
+}
 function toggleHotelOther(sel){
   const otherInput = sel.closest('.hotel-field-wrap')?.querySelector(`input[name="${sel.name.replace('_select','_other')}"]`);
   if(!otherInput) return;
@@ -2023,7 +2032,7 @@ function renderHajis(){
         return `
         <div class="summary-row" data-search="${esc(searchText)}" onclick="openModal('hajiDetail', hajiById('${h.id}'))">
           <div>
-            <div class="summary-name">${esc(h.full_name)} ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''}</div>
+            <div class="summary-name">${esc(h.full_name)} ${h.is_elderly?'<span class="pill warn">Elderly</span>':''} ${h.needs_wheelchair?'<span class="pill warn">Wheelchair</span>':''} ${h.rawdha_status==='booked'?'<span class="pill ok">Rawdha booked</span>':''}</div>
             <div class="summary-sub">${hajiSummaryLine(h, maps)}</div>
           </div>
           <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
@@ -2079,6 +2088,9 @@ async function saveHaji(e, id){
     flight_number: f.flight_number.value || null,
     q_number: id ? (f.q_number.value || null) : undefined,
     package_id: f.package_id.value || null,
+    rawdha_status: f.rawdha_status.value || 'not_booked',
+    rawdha_date: f.rawdha_status.value==='booked' ? (f.rawdha_date.value || null) : null,
+    rawdha_time: f.rawdha_status.value==='booked' ? (f.rawdha_time.value || null) : null,
     notes: f.notes.value
   };
   if(payload.age===undefined) delete payload.age;
@@ -2098,6 +2110,135 @@ async function saveHaji(e, id){
     if(provErr) showNotice(`Saved, but pilgrim login setup failed: ${provErr.message}`, 'error');
   }
   closeModal(); await loadGroupData(); render();
+}
+
+// ---------- RAWDHA BOOKINGS ----------
+// Rawdha visits (in the Prophet's Mosque, Madinah) are now booked individually per pilgrim
+// through the Nusuk app. This view lets staff track, at a glance, who has a confirmed slot and
+// who still needs to book, and update a pilgrim's status quickly without opening the full edit form.
+function setRawdhaStatusFilter(filter){
+  state.rawdhaStatusFilter = filter;
+  render();
+}
+function rawdhaFilteredHajis(){
+  if(state.rawdhaStatusFilter==='booked') return state.hajis.filter(h=>h.rawdha_status==='booked');
+  if(state.rawdhaStatusFilter==='not_booked') return state.hajis.filter(h=>h.rawdha_status!=='booked');
+  return state.hajis;
+}
+function renderRawdhaBookings(){
+  const total = state.hajis.length;
+  const booked = state.hajis.filter(h=>h.rawdha_status==='booked').length;
+  const notBooked = total - booked;
+  const rows = rawdhaFilteredHajis();
+  return `
+    <div class="toolbar">
+      <button class="ghost" onclick="exportRawdhaPdf()">Export PDF</button>
+      <button class="ghost" onclick="exportRawdhaXlsx()">Export Excel</button>
+    </div>
+    <div class="grid grid-4" style="margin-bottom:16px;">
+      <div class="card"><div class="stat-label">Total pilgrims</div><div class="stat-value">${total}</div></div>
+      <div class="card"><div class="stat-label">Rawdha booked</div><div class="stat-value" style="color:#3D6B4C">${booked}</div></div>
+      <div class="card"><div class="stat-label">Not booked yet</div><div class="stat-value" style="color:${notBooked?'#9B3A2E':'#3D6B4C'}">${notBooked}</div></div>
+    </div>
+    <div class="two-col" style="margin-bottom:12px;">
+      <div class="field" style="margin-bottom:0;">
+        <input id="rawdha-search" placeholder="Search by name or group…" value="${esc(state.rawdhaSearchQuery||'')}" oninput="filterRawdhaList(this.value)"/>
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button class="${state.rawdhaStatusFilter==='all'?'primary':'ghost'}" style="flex:1" onclick="setRawdhaStatusFilter('all')">All</button>
+        <button class="${state.rawdhaStatusFilter==='booked'?'primary':'ghost'}" style="flex:1" onclick="setRawdhaStatusFilter('booked')">Booked</button>
+        <button class="${state.rawdhaStatusFilter==='not_booked'?'primary':'ghost'}" style="flex:1" onclick="setRawdhaStatusFilter('not_booked')">Not booked</button>
+      </div>
+    </div>
+    <div class="summary-list" id="rawdha-list">
+      ${rows.map(h=>{
+        const grp = groupById(h.group_id);
+        const isBooked = h.rawdha_status==='booked';
+        const searchText = [h.full_name, grp?.name].filter(Boolean).join(' ').toLowerCase();
+        return `
+        <div class="summary-row" data-search="${esc(searchText)}">
+          <div>
+            <div class="summary-name">${esc(h.full_name)} <span class="pill ${isBooked?'ok':'warn'}">${isBooked?'Booked':'Not booked'}</span></div>
+            <div class="summary-sub">${esc(grp?.name||'—')}${isBooked?` · ${h.rawdha_date?formatDateDisplay(h.rawdha_date):'—'}${h.rawdha_time?` · ${esc(h.rawdha_time)}`:''}`:''}</div>
+          </div>
+          <button class="ghost" onclick="openModal('rawdhaQuickUpdate', hajiById('${h.id}'))">Update</button>
+        </div>
+      `;}).join('') || `<div class="empty">No pilgrims match this filter.</div>`}
+    </div>
+    <div id="rawdha-no-results" class="empty" style="display:none;">No matches found.</div>
+  `;
+}
+function filterRawdhaList(query){
+  state.rawdhaSearchQuery = query;
+  const q = query.trim().toLowerCase();
+  let visibleCount = 0;
+  document.querySelectorAll('#rawdha-list .summary-row').forEach(row=>{
+    const match = !q || (row.dataset.search||'').includes(q);
+    row.style.display = match ? '' : 'none';
+    if(match) visibleCount++;
+  });
+  const noResults = document.getElementById('rawdha-no-results');
+  if(noResults) noResults.style.display = (q && visibleCount===0) ? '' : 'none';
+}
+async function saveRawdhaQuickUpdate(e, hajiId){
+  e.preventDefault();
+  if(!requireOnline()) return;
+  const f = e.target;
+  const status = f.rawdha_status.value || 'not_booked';
+  const payload = {
+    rawdha_status: status,
+    rawdha_date: status==='booked' ? (f.rawdha_date.value || null) : null,
+    rawdha_time: status==='booked' ? (f.rawdha_time.value || null) : null,
+  };
+  const { error } = await sb.from('hajis').update(payload).eq('id', hajiId);
+  if(error){ showNotice(error.message, 'error'); return; }
+  const h = state.hajis.find(x=>x.id===hajiId);
+  if(h) Object.assign(h, payload);
+  closeModal();
+  render();
+  showNotice('Rawdha booking updated.', 'success');
+}
+function rawdhaReportBodyHtml(){
+  const total = state.hajis.length;
+  const booked = state.hajis.filter(h=>h.rawdha_status==='booked').length;
+  const rows = [...state.hajis].sort((a,b)=>{
+    if(a.rawdha_status===b.rawdha_status) return (a.full_name||'').localeCompare(b.full_name||'');
+    return a.rawdha_status==='booked' ? 1 : -1; // not-booked pilgrims first, as the actionable list
+  });
+  return `
+    <h1>Qibla MV — Rawdha Bookings</h1>
+    <div class="sub">Issued ${todayIso()} · ${booked} of ${total} pilgrims booked</div>
+    <table>
+      <thead><tr><th>Pilgrim</th><th>Group</th><th>Status</th><th>Date</th><th>Time</th></tr></thead>
+      <tbody>
+        ${rows.map(h=>{
+          const grp = groupById(h.group_id);
+          const isBooked = h.rawdha_status==='booked';
+          return `<tr><td>${esc(h.full_name)}</td><td>${esc(grp?.name||'—')}</td><td>${isBooked?'Booked':'Not booked'}</td><td>${isBooked&&h.rawdha_date?formatDateDisplay(h.rawdha_date):'—'}</td><td>${isBooked&&h.rawdha_time?esc(h.rawdha_time):'—'}</td></tr>`;
+        }).join('') || `<tr><td colspan="5">No pilgrims yet.</td></tr>`}
+      </tbody>
+    </table>
+  `;
+}
+function exportRawdhaPdf(){
+  exportHtmlToPdf('Rawdha Bookings', rawdhaReportBodyHtml());
+}
+function exportRawdhaXlsx(){
+  const rows = [...state.hajis].sort((a,b)=>{
+    if(a.rawdha_status===b.rawdha_status) return (a.full_name||'').localeCompare(b.full_name||'');
+    return a.rawdha_status==='booked' ? 1 : -1;
+  });
+  const aoa = [
+    ['Rawdha Bookings', todayIso()],
+    [],
+    ['Pilgrim','Group','Status','Date','Time'],
+    ...rows.map(h=>{
+      const grp = groupById(h.group_id);
+      const isBooked = h.rawdha_status==='booked';
+      return [h.full_name, grp?.name||'', isBooked?'Booked':'Not booked', isBooked&&h.rawdha_date?h.rawdha_date:'', isBooked&&h.rawdha_time?h.rawdha_time:''];
+    })
+  ];
+  exportRowsToXlsx(`Rawdha-Bookings-${todayIso()}.xlsx`, 'Rawdha Bookings', aoa);
 }
 
 function parseCsvLine(line){
@@ -3902,6 +4043,7 @@ function renderModal(){
         ${detailRow('Q number', esc(h.q_number||'—'))}
         ${detailRow('Room', room?`${esc(room.room_number)} (${titleCase(room.hotel_leg)})`:'—')}
         ${detailRow('Bus', bus?`${esc(bus.bus_number)} (${titleCase(bus.leg.replace(/_/g,' '))}${busTripLabel(bus)?` · ${esc(busTripLabel(bus))}`:''})`:'—')}
+        ${detailRow('Rawdha booking', h.rawdha_status==='booked' ? `<span class="pill ok">Booked${h.rawdha_date?` — ${formatDateDisplay(h.rawdha_date)}`:''}${h.rawdha_time?` · ${esc(h.rawdha_time)}`:''}</span>` : '<span class="pill warn">Not booked yet</span>')}
         ${detailRow('Notes', esc(h.notes||'—'))}
       </div>
       <div style="display:flex;gap:8px;margin-top:16px;">
@@ -3963,7 +4105,45 @@ function renderModal(){
           <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;"><input type="checkbox" name="is_elderly" style="width:auto;" ${data.is_elderly?'checked':''}/> Elderly</label>
           <label style="display:flex;align-items:center;gap:6px;font-weight:400;text-transform:none;font-size:13px;"><input type="checkbox" name="needs_wheelchair" style="width:auto;" ${data.needs_wheelchair?'checked':''}/> Needs wheelchair</label>
         </div>
+        <div class="field"><label>Rawdha booking (Nusuk app)</label>
+          ${customSelectHtml({
+            name: 'rawdha_status',
+            options: [{value:'not_booked', label:'Not booked yet'}, {value:'booked', label:'Booked'}],
+            value: data.rawdha_status||'not_booked',
+            searchable: false,
+            onChange: 'toggleRawdhaFields(this)'
+          })}
+        </div>
+        <div class="two-col rawdha-fields" style="display:${data.rawdha_status==='booked'?'grid':'none'};margin-top:-6px;">
+          <div class="field"><label>Confirmed date</label>${customDateHtml({ name:'rawdha_date', value: data.rawdha_date||'' })}</div>
+          <div class="field"><label>Confirmed time slot</label><input name="rawdha_time" value="${esc(data.rawdha_time||'')}" placeholder="e.g. 10:00–10:30 AM"/></div>
+        </div>
         <div class="field"><label>Notes</label><input name="notes" value="${esc(data.notes||'')}"/></div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="submit" class="primary" style="flex:1">Save</button>
+          <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
+    `;
+  } else if(type==='rawdhaQuickUpdate'){
+    const h = data;
+    body = `
+      <h3>${esc(h.full_name)}</h3>
+      <p style="font-size:12px;color:#8a8168;margin-bottom:14px;">Rawdha booking status (Nusuk app)</p>
+      <form onsubmit="saveRawdhaQuickUpdate(event, '${h.id}')">
+        <div class="field"><label>Status</label>
+          ${customSelectHtml({
+            name: 'rawdha_status',
+            options: [{value:'not_booked', label:'Not booked yet'}, {value:'booked', label:'Booked'}],
+            value: h.rawdha_status||'not_booked',
+            searchable: false,
+            onChange: 'toggleRawdhaFields(this)'
+          })}
+        </div>
+        <div class="two-col rawdha-fields" style="display:${h.rawdha_status==='booked'?'grid':'none'};margin-top:-6px;">
+          <div class="field"><label>Confirmed date</label>${customDateHtml({ name:'rawdha_date', value: h.rawdha_date||'' })}</div>
+          <div class="field"><label>Confirmed time slot</label><input name="rawdha_time" value="${esc(h.rawdha_time||'')}" placeholder="e.g. 10:00–10:30 AM"/></div>
+        </div>
         <div style="display:flex;gap:8px;margin-top:16px;">
           <button type="submit" class="primary" style="flex:1">Save</button>
           <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
