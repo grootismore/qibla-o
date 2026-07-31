@@ -450,6 +450,7 @@ let state = {
   groupRoomCounts: new Map(), // group_id -> room count, across ALL groups
   groupBusCounts: new Map(), // group_id -> bus count, across ALL groups
   hajisSearchQuery: '',
+  hajisGroupFilter: 'all', // 'all' | 'groupH'
   rawdhaSearchQuery: '',
   rawdhaStatusFilter: 'all', // 'all' | 'booked' | 'not_booked' | 'visited_recently'
   rawdhaBusFilter: '', // '' = all buses, else a bus id
@@ -2051,6 +2052,8 @@ async function deleteTripType(id){
 // ---------- HAJIS ----------
 function renderHajis(){
   const maps = { rooms: hajiRoomMap(), buses: hajiBusMap() };
+  const groupHCount = state.hajis.filter(isGroupHHaji).length;
+  const list = state.hajisGroupFilter==='groupH' ? state.hajis.filter(isGroupHHaji) : state.hajis;
   return `
     <div class="toolbar">
       ${can('manageHajis') ? `<button class="primary" onclick="openModal('haji')">+ Add haji</button>` : ''}
@@ -2058,8 +2061,12 @@ function renderHajis(){
     <div class="field" style="margin-bottom:12px;">
       <input id="hajis-search" placeholder="Search by name, group, room, or Q number…" value="${esc(state.hajisSearchQuery||'')}" oninput="filterHajisList(this.value)"/>
     </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <button class="${state.hajisGroupFilter==='all'?'primary':'ghost'}" style="flex:1;min-width:80px;" onclick="setHajisGroupFilter('all')">All pilgrims</button>
+      <button class="${state.hajisGroupFilter==='groupH'?'primary':'ghost'}" style="flex:1;min-width:80px;" onclick="setHajisGroupFilter('groupH')" ${groupHCount?'':'disabled'}>Group H only (${groupHCount})</button>
+    </div>
     <div class="summary-list" id="hajis-list">
-      ${state.hajis.map(h=>{
+      ${list.map(h=>{
         const room = maps.rooms.get(`${h.id}|mecca`) || maps.rooms.get(`${h.id}|madinah`);
         const grp = groupById(h.group_id);
         const searchText = [h.full_name, grp?.name, room?.room_number, h.q_number].filter(Boolean).join(' ').toLowerCase();
@@ -2071,10 +2078,14 @@ function renderHajis(){
           </div>
           <svg class="summary-chevron" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>
         </div>
-      `;}).join('') || `<div class="empty">No hajis yet — add one, or import a CSV in Settings.</div>`}
+      `;}).join('') || `<div class="empty">${state.hajisGroupFilter==='groupH' ? 'No one in Group H yet.' : 'No hajis yet — add one, or import a CSV in Settings.'}</div>`}
     </div>
     <div id="hajis-no-results" class="empty" style="display:none;">No matches found.</div>
   `;
+}
+function setHajisGroupFilter(filter){
+  state.hajisGroupFilter = filter;
+  render();
 }
 function filterHajisList(query){
   state.hajisSearchQuery = query;
