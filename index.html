@@ -82,6 +82,7 @@
   .mobile-topbar{display:none;}
   .grid{display:grid;gap:14px;}
   .grid-4{grid-template-columns:repeat(4,1fr);}
+  .grid-bus-cards{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));}
   .sidebar-close-btn{display:none;position:absolute;top:14px;right:14px;background:transparent;border:none;color:var(--sand);font-size:20px;line-height:1;cursor:pointer;padding:4px;}
   .sidebar-backdrop{display:none;}
   .install-btn{margin-top:10px;width:100%;}
@@ -2742,6 +2743,7 @@ function busCardsHtml(buses, leg){
       <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Helpers: ${helpers.length?esc(helpers.map(busHelperEntryLabel).join(', ')):'—'}</div>
       <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,total/b.capacity*100)}%"></div></div>
       <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('assignBus',{busId:'${b.id}'})" ${can('manageBuses')?'':'disabled'}>Assign pilgrims</button>
+      <button class="ghost" style="margin-top:8px;width:100%;" onclick="exportBusManifest('${b.id}')" ${total?'':'disabled'}>View / print list</button>
       ${can('manageBuses') ? `
         <div style="display:flex;gap:8px;margin-top:8px;">
           <button class="ghost" style="flex:1;" onclick="openModal('busHelpers',{busId:'${b.id}'})">Helpers</button>
@@ -2767,14 +2769,45 @@ function renderBuses(){
     </div>
     ${nonZiyaratLegs.map(([leg,label])=>`
       <h3 style="margin:18px 0 10px;">${label}</h3>
-      <div class="grid grid-4">${busCardsHtml(state.buses.filter(b=>b.leg===leg), leg)}</div>
+      <div class="grid grid-bus-cards">${busCardsHtml(state.buses.filter(b=>b.leg===leg), leg)}</div>
     `).join('')}
     <h3 style="margin:18px 0 10px;">Ziyarat</h3>
     ${ziyaratGroups.length ? ziyaratGroups.map(g=>`
       <h4 style="margin:14px 0 8px;color:#6b6252;font-size:13px;text-transform:uppercase;letter-spacing:.04em;">${esc(g.label)}</h4>
-      <div class="grid grid-4">${busCardsHtml(g.buses, 'ziyarat')}</div>
+      <div class="grid grid-bus-cards">${busCardsHtml(g.buses, 'ziyarat')}</div>
     `).join('') : `<div class="empty">No ziyarat buses added yet.</div>`}
   `;
+}
+function busManifestBodyHtml(bus){
+  const occ = [...busOccupants(bus.id)].sort((a,b)=>{
+    const groupCmp = naturalCompare(groupById(a.group_id)?.name||'', groupById(b.group_id)?.name||'');
+    if(groupCmp!==0) return groupCmp;
+    return (a.full_name||'').localeCompare(b.full_name||'');
+  });
+  const helpers = busHelpersFor(bus.id);
+  const trip = busTripLabel(bus);
+  return `
+    <h1>Qibla MV — Bus Manifest — Bus ${esc(bus.bus_number)}</h1>
+    <div class="sub">${trip?`${esc(trip)} · `:''}${occ.length} pilgrim${occ.length===1?'':'s'}${helpers.length?` · ${helpers.length} helper${helpers.length===1?'':'s'}`:''} · ${occ.length+helpers.length}/${bus.capacity} seats</div>
+    <table>
+      <thead><tr><th>#</th><th>Name</th><th>Group</th><th>Q#</th><th>Phone</th></tr></thead>
+      <tbody>
+        ${occ.map((h,i)=>`<tr><td>${i+1}</td><td>${esc(h.full_name)}</td><td>${esc(groupById(h.group_id)?.name||'—')}</td><td>${esc(h.q_number||'—')}</td><td>${esc(h.phone||'—')}</td></tr>`).join('') || `<tr><td colspan="5">No pilgrims assigned yet.</td></tr>`}
+      </tbody>
+    </table>
+    ${helpers.length ? `
+      <h2>Helpers</h2>
+      <table>
+        <thead><tr><th>#</th><th>Name</th></tr></thead>
+        <tbody>${helpers.map((h,i)=>`<tr><td>${i+1}</td><td>${esc(busHelperEntryLabel(h))}</td></tr>`).join('')}</tbody>
+      </table>
+    ` : ''}
+  `;
+}
+function exportBusManifest(busId){
+  const bus = state.buses.find(b=>b.id===busId);
+  if(!bus) return;
+  exportHtmlToPdf(`Bus Manifest — Bus ${bus.bus_number}`, busManifestBodyHtml(bus));
 }
 
 function toggleBusTripField(sel){
@@ -2817,6 +2850,13 @@ function existingHelperNames(){
   state.busHelpers.forEach(h=>{ if(!h.staff_id && h.helper_name?.trim()) names.add(h.helper_name.trim()); });
   return [...names].sort((a,b)=>a.localeCompare(b));
 }
+// Pilgrims entered under the "H" group are people who actually travel as helpers rather than
+// hajis -- offer them in the helper picker too, alongside registered staff.
+function groupHHajis(){
+  return state.hajis
+    .filter(h=>(groupById(h.group_id)?.name||'').trim().toUpperCase()==='H')
+    .sort((a,b)=>(a.full_name||'').localeCompare(b.full_name||''));
+}
 function submitAddBusHelper(e, busId){
   e.preventDefault();
   const f = e.target;
@@ -2828,6 +2868,10 @@ function submitAddBusHelper(e, busId){
     addBusHelper(busId, null, name);
   } else if(sel.startsWith('existing:')){
     addBusHelper(busId, null, sel.slice('existing:'.length));
+  } else if(sel.startsWith('haji:')){
+    const haji = hajiById(sel.slice('haji:'.length));
+    if(!haji){ showNotice('That pilgrim could not be found.', 'error'); return; }
+    addBusHelper(busId, null, haji.full_name);
   } else {
     addBusHelper(busId, sel, null);
   }
@@ -4520,6 +4564,7 @@ function renderModal(){
     const assignedStaffIds = new Set(helpers.map(h=>h.staff_id).filter(Boolean));
     const assignedNames = new Set(helpers.map(h=>h.helper_name).filter(Boolean));
     const availableExistingNames = existingHelperNames().filter(n=>!assignedNames.has(n));
+    const availableGroupHHajis = groupHHajis().filter(h=>!assignedNames.has(h.full_name));
     body = `
       <h3>Helpers — Bus ${esc(bus.bus_number)}</h3>
       <p style="font-size:12px;color:#6b6252;margin-bottom:12px;">Each helper counts as one passenger toward capacity.</p>
@@ -4538,6 +4583,7 @@ function renderModal(){
             options: [
               {value:'', label:'— Select staff or helper —'},
               ...state.staffList.filter(s=>!assignedStaffIds.has(s.id)).map(s=>({value:s.id, label:`${s.full_name} (${roleLabel(s.role)})`})),
+              ...availableGroupHHajis.map(h=>({value:'haji:'+h.id, label:`${h.full_name} (Group H)`})),
               ...availableExistingNames.map(n=>({value:'existing:'+n, label:`${n} (existing helper)`})),
               {value:'other', label:'Other (type new name)'}
             ],
