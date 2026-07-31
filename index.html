@@ -2852,10 +2852,11 @@ function existingHelperNames(){
 }
 // Pilgrims entered under the "H" group are people who actually travel as helpers rather than
 // hajis -- offer them in the helper picker too, alongside registered staff.
+function isGroupHHaji(h){
+  return (groupById(h.group_id)?.name||'').trim().toUpperCase()==='H';
+}
 function groupHHajis(){
-  return state.hajis
-    .filter(h=>(groupById(h.group_id)?.name||'').trim().toUpperCase()==='H')
-    .sort((a,b)=>(a.full_name||'').localeCompare(b.full_name||''));
+  return state.hajis.filter(isGroupHHaji).sort((a,b)=>(a.full_name||'').localeCompare(b.full_name||''));
 }
 function submitAddBusHelper(e, busId){
   e.preventDefault();
@@ -4314,7 +4315,7 @@ function renderModal(){
         ${detailRow('Bus', bus?`${esc(bus.bus_number)} (${titleCase(bus.leg.replace(/_/g,' '))}${busTripLabel(bus)?` · ${esc(busTripLabel(bus))}`:''})`:'—')}
         ${detailRow('Rawdha booking', `<span class="pill ${rawdhaStatusPillClass(h.rawdha_status)}">${rawdhaStatusLabel(h.rawdha_status)}${h.rawdha_status==='booked'&&h.rawdha_date?` — ${formatDateDisplay(h.rawdha_date)}`:''}${h.rawdha_status==='booked'&&h.rawdha_time?` · ${esc(h.rawdha_time)}`:''}</span>`)}
         ${detailRow('Notes', esc(h.notes||'—'))}
-        ${can('manageStaff') ? detailRow('Staff access', staffAccount
+        ${(can('manageStaff') && isGroupHHaji(h)) ? detailRow('Staff access', staffAccount
           ? `<span class="pill ok">${esc(roleLabel(staffAccount.role))}</span>`
           : (h.auth_user_id
             ? `<button class="ghost" style="padding:4px 10px;font-size:12px;" onclick="openModal('grantStaffAccess',{haji:hajiById('${h.id}')})">Grant access</button>`
