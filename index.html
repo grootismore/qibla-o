@@ -3919,6 +3919,26 @@ async function saveAddStaff(e){
   closeModal();
   showNotice('Staff login created.', 'success');
 }
+// The roles a signed-in admin/super_admin is allowed to hand out: a super_admin can grant any
+// role including other owners/admins, while a plain admin is capped at Helper/Accountant.
+function staffRoleOptionsForCaller(){
+  return state.myRole==='super_admin'
+    ? [['agent','Helper'],['accountant','Accountant'],['admin','Qibla Admins'],['super_admin','Qibla Owners']]
+    : [['agent','Helper'],['accountant','Accountant']];
+}
+async function saveGrantStaffAccess(e, hajiId){
+  e.preventDefault();
+  if(!requireOnline()) return;
+  const f = e.target;
+  const { error } = await sb.rpc('grant_staff_role_to_haji', {
+    p_haji_id: hajiId,
+    p_role: f.role.value,
+  });
+  if(error){ showNotice(error.message, 'error'); return; }
+  await loadStaffList();
+  closeModal();
+  showNotice('Staff access granted.', 'success');
+}
 
 // ---------- SETTINGS ----------
 function renderSettings(){
@@ -4271,6 +4291,7 @@ function renderModal(){
     const bal = due - hajiPaid(h.id);
     const room = hajiRoom(h.id,'mecca') || hajiRoom(h.id,'madinah');
     const bus = hajiBus(h.id);
+    const staffAccount = h.auth_user_id ? state.staffList.find(s=>s.id===h.auth_user_id) : null;
     const detailRow = (label, value) => `<div class="detail-row"><span class="detail-label">${label}</span><span class="detail-value">${value}</span></div>`;
     body = `
       <h3>${esc(h.full_name)}</h3>
@@ -4293,6 +4314,12 @@ function renderModal(){
         ${detailRow('Bus', bus?`${esc(bus.bus_number)} (${titleCase(bus.leg.replace(/_/g,' '))}${busTripLabel(bus)?` · ${esc(busTripLabel(bus))}`:''})`:'—')}
         ${detailRow('Rawdha booking', `<span class="pill ${rawdhaStatusPillClass(h.rawdha_status)}">${rawdhaStatusLabel(h.rawdha_status)}${h.rawdha_status==='booked'&&h.rawdha_date?` — ${formatDateDisplay(h.rawdha_date)}`:''}${h.rawdha_status==='booked'&&h.rawdha_time?` · ${esc(h.rawdha_time)}`:''}</span>`)}
         ${detailRow('Notes', esc(h.notes||'—'))}
+        ${can('manageStaff') ? detailRow('Staff access', staffAccount
+          ? `<span class="pill ok">${esc(roleLabel(staffAccount.role))}</span>`
+          : (h.auth_user_id
+            ? `<button class="ghost" style="padding:4px 10px;font-size:12px;" onclick="openModal('grantStaffAccess',{haji:hajiById('${h.id}')})">Grant access</button>`
+            : `<span style="font-size:12px;color:#8a8168;">Needs a passport number + phone on file first</span>`)
+        ) : ''}
       </div>
       <div style="display:flex;gap:8px;margin-top:16px;">
         ${can('manageHajis') ? `<button class="primary" style="flex:1" onclick="openModal('haji', hajiById('${h.id}'))">Edit</button>` : ''}
@@ -4697,9 +4724,7 @@ function renderModal(){
       </form>
     `;
   } else if(type==='addStaff'){
-    const roleOptions = state.myRole==='super_admin'
-      ? [['agent','Helper'],['accountant','Accountant'],['admin','Qibla Admins'],['super_admin','Qibla Owners']]
-      : [['agent','Helper'],['accountant','Accountant']];
+    const roleOptions = staffRoleOptionsForCaller();
     body = `
       <h3>Add staff</h3>
       <p style="font-size:12px;color:#6b6252;margin-bottom:14px;">Creates a login for this person directly — they don't need to sign up themselves.</p>
@@ -4710,6 +4735,20 @@ function renderModal(){
         <div class="field"><label>Role</label>${customSelectHtml({ name:'role', options: roleOptions.map(([v,l])=>({value:v,label:l})), searchable:false })}</div>
         <div style="display:flex;gap:8px;margin-top:16px;">
           <button type="submit" class="primary" style="flex:1">Create login</button>
+          <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
+    `;
+  } else if(type==='grantStaffAccess'){
+    const h = data.haji;
+    const roleOptions = staffRoleOptionsForCaller();
+    body = `
+      <h3>Grant staff access — ${esc(h.full_name)}</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:14px;">They'll sign in with the same passport number and phone number as their pilgrim login, but land in the staff app with the role you pick below instead of the read-only pilgrim dashboard.</p>
+      <form onsubmit="saveGrantStaffAccess(event, '${h.id}')">
+        <div class="field"><label>Role</label>${customSelectHtml({ name:'role', options: roleOptions.map(([v,l])=>({value:v,label:l})), searchable:false })}</div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button type="submit" class="primary" style="flex:1">Grant access</button>
           <button type="button" class="ghost" onclick="closeModal()">Cancel</button>
         </div>
       </form>
