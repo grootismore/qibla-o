@@ -1624,11 +1624,11 @@ function renderAuth(){
           <button id="forgot-pass-btn" class="link-btn" style="margin-top:12px;" onclick="withBusyButton('forgot-pass-btn','Sending…',()=>doForgotPassword())">Forgot password?</button>
           <button class="link-btn" style="margin-top:6px;" onclick="setAuthMode('haji')">← Back to pilgrim sign-in</button>
         ` : `
-          <p style="font-size:12px;color:#8a8168;margin:14px 0;">Welcome back! Sign in with the passport number and phone number your group coordinator has on file for you.</p>
+          <p style="font-size:12px;color:#8a8168;margin:14px 0;">Welcome back! Sign in with your passport  number and phone number.</p>
           <div class="field"><label>Passport number</label><input id="haji-passport" placeholder="e.g. A1234567" autocomplete="off" autofocus/></div>
           <div class="field"><label>Phone number</label><input id="haji-phone" placeholder="Your registered phone number" autocomplete="tel"/></div>
           <button id="haji-signin-btn" class="primary" style="width:100%;margin-top:6px;" onclick="doHajiSignIn()">Sign in</button>
-          <p style="font-size:11px;color:#8a8168;margin-top:12px;">Don't have login details? Ask your group coordinator.</p>
+          <p style="font-size:11px;color:#8a8168;margin-top:12px;">Don't have login details? Contact Qibla Team.</p>
           <button class="link-btn" style="margin-top:14px;" onclick="setAuthMode('staff')">Staff login</button>
         `}
         ${state.canInstall ? `<button class="ghost install-btn" onclick="installApp()">⭳ Install app</button>` : ''}
