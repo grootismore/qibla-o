@@ -296,7 +296,10 @@
     }
     .table-wrap td:first-child{padding-top:0;}
     .table-wrap td:last-child{padding-bottom:0;}
-    .table-wrap .row-actions{margin-top:4px;}
+    /* Stack card action buttons full-width, one per row, instead of relying on a horizontal
+       gap between same-styled pills -- unambiguous separation on narrow screens. */
+    .table-wrap .row-actions{margin-top:8px;flex-direction:column;align-items:stretch;gap:8px;}
+    .table-wrap .row-actions button{width:100%;}
 
     /* Compact variant: short numeric columns (Paid/FOC/Total…) sit in a row instead of each
        taking a full-width line, so a row like "Adult · Paid 5 · FOC 4 · Total 9" stays one glance. */
