@@ -1612,8 +1612,10 @@ function renderAuth(){
   root.innerHTML = `
     <div class="auth-wrap">
       <div class="auth-card">
-        <h1>Qibla Hajj &amp; Umrah</h1>
-        <div class="tagline" dir="rtl" lang="dv" style="font-style:normal;font-size:15px;">އިތުބާރާއެކު ފުރިހަމަ ޚިދުމަތްތަކެއް!</div>
+        <div style="text-align:center;">
+          <h1>Qibla Hajj &amp; Umrah</h1>
+          <div class="tagline" dir="rtl" lang="dv" style="font-style:normal;font-size:15px;">އިތުބާރާއެކު ފުރިހަމަ ޚިދުމަތްތަކެއް!</div>
+        </div>
         ${staffMode ? `
           <p style="font-size:12px;color:#8a8168;margin:14px 0;">Staff sign-in. Staff accounts are set up by a Qibla Admin or Qibla Owner — there's no self sign-up here.</p>
           <div class="field"><label>Email</label><input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email" autofocus/></div>
