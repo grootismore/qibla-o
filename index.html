@@ -315,8 +315,8 @@
 </head>
 <body>
 <div id="app-splash">
-  <img src="icons/icon-192.png" alt="Qibla MV" width="84" height="84">
-  <div class="app-splash-name">Qibla MV</div>
+  <img src="icons/qibla-icon-on-dark-84.png" alt="Qibla Hajj &amp; Umrah" width="84" height="84">
+  <div class="app-splash-name">Qibla Hajj &amp; Umrah</div>
   <div class="app-splash-spinner"></div>
 </div>
 <div id="progress-bar"><div class="bar"></div></div>
@@ -1599,6 +1599,7 @@ function renderOfflineNoCacheScreen(){
   root.innerHTML = `
     <div class="auth-wrap">
       <div class="auth-card" style="text-align:center;">
+        <img src="icons/qibla-icon.png" alt="" width="64" height="64" style="margin-bottom:10px;">
         <h1>Qibla Hajj &amp; Umrah</h1>
         <div class="tagline" dir="rtl" lang="dv" style="font-style:normal;font-size:15px;">އިތުބާރާއެކު ފުރިހަމަ ޚިދުމަތްތަކެއް!</div>
         <p style="margin:16px 0;color:#6b6252;">You're offline and no cached data is available on this device yet. Connect to the internet once to load your data — after that it'll stay available offline.</p>
@@ -1613,6 +1614,7 @@ function renderAuth(){
     <div class="auth-wrap">
       <div class="auth-card">
         <div style="text-align:center;">
+          <img src="icons/qibla-icon.png" alt="" width="64" height="64" style="margin-bottom:10px;">
           <h1>Qibla Hajj &amp; Umrah</h1>
           <div class="tagline" dir="rtl" lang="dv" style="font-style:normal;font-size:15px;">އިތުބާރާއެކު ފުރިހަމަ ޚިދުމަތްތަކެއް!</div>
         </div>
@@ -1671,9 +1673,12 @@ function renderHajiDashboard(){
     <div class="auth-wrap" style="align-items:flex-start;padding:28px 14px;min-height:100vh;">
       <div style="width:100%;max-width:520px;margin:0 auto;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
-          <div>
-            <h1 style="color:var(--sand);font-size:22px;">Qibla Hajj &amp; Umrah</h1>
-            <div style="color:var(--gold-soft);font-size:12px;font-style:italic;">Welcome, ${esc(h.full_name)}</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <img src="icons/qibla-icon-on-dark-192.png" alt="" width="36" height="36">
+            <div>
+              <h1 style="color:var(--sand);font-size:22px;">Qibla Hajj &amp; Umrah</h1>
+              <div style="color:var(--gold-soft);font-size:12px;font-style:italic;">Welcome, ${esc(h.full_name)}</div>
+            </div>
           </div>
           <button class="ghost" style="color:var(--sand);border-color:rgba(242,236,221,.35);" onclick="signOut()">Sign out</button>
         </div>
