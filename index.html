@@ -595,6 +595,12 @@ async function installApp(){
 const root = document.getElementById('root');
 
 function fmt(n){ return 'MVR ' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+// Ziyarat trip payments are collected in Saudi Riyal, unlike Umrah package payments (MVR) --
+// keep the two formatters distinct so trip amounts never get mislabeled as MVR.
+function fmtSar(n){ return 'SAR ' + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+// A payment row is either a package payment or a trip payment, never both (see saveTripPayments
+// vs savePayment), so its currency is determined by whether it has trip line items attached.
+function paymentAmountFmt(p){ return tripsForPayment(p.id).length ? fmtSar(p.amount) : fmt(p.amount); }
 function esc(s){ return (s??'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // ---------- AUTH ----------
@@ -1709,7 +1715,7 @@ function renderHajiDashboard(){
                   const trips = state.myPaymentTripItems.filter(t=>t.payment_id===p.id);
                   return `<tr>
                     <td>${p.paid_on}${trips.length?`<div style="font-size:11px;color:#8a8168;">${trips.map(t=>esc(t.trip_name)).join(', ')}</div>`:''}</td>
-                    <td data-label="Amount">${fmt(p.amount)}</td>
+                    <td data-label="Amount">${trips.length ? fmtSar(p.amount) : fmt(p.amount)}</td>
                     <td data-label="Method" style="text-transform:capitalize;">${p.method.replace('_',' ')}</td>
                   </tr>`;
                 }).join('') || `<tr><td colspan="3" class="empty">No payments recorded yet.</td></tr>`}
@@ -1769,7 +1775,10 @@ function renderDashboard(){
   const monthPayments = state.payments.filter(p=>monthHajiIds.has(p.haji_id));
   const total = monthHajis.length;
   const totalDue = monthHajis.reduce((s,h)=>{ const pkg=packageById(h.package_id); return s+(pkg?Number(pkg.price):0); },0);
-  const totalCollected = monthPayments.reduce((s,p)=>s+Number(p.amount),0);
+  // Package payments (MVR) and trip payments (SAR) are different currencies -- track them as
+  // two separate totals rather than summing them into one misleading figure.
+  const totalCollectedMvr = monthPayments.filter(p=>!tripsForPayment(p.id).length).reduce((s,p)=>s+Number(p.amount),0);
+  const totalCollectedSar = monthPayments.filter(p=>tripsForPayment(p.id).length).reduce((s,p)=>s+Number(p.amount),0);
   const roomsAssigned = new Set(state.roomAssignments.filter(a=>monthHajiIds.has(a.haji_id)).map(a=>a.haji_id)).size;
   const busesById = new Map(state.buses.map(b=>[b.id, b]));
   const busAssignedM = new Set(state.busAssignments.filter(a=>monthHajiIds.has(a.haji_id) && busesById.get(a.bus_id)?.leg==='mecca_madinah').map(a=>a.haji_id)).size;
@@ -1792,9 +1801,10 @@ function renderDashboard(){
         <div class="stat-value">${fmt(totalDue)}</div>
       </div>
       <div class="card">
-        <div class="stat-label">Total collected</div>
-        <div class="stat-value" style="color:var(--ok)">${fmt(totalCollected)}</div>
-        <div class="capacity-bar"><div class="capacity-fill" style="width:${totalDue?Math.min(100,totalCollected/totalDue*100):0}%"></div></div>
+        <div class="stat-label">Total collected (MVR)</div>
+        <div class="stat-value" style="color:var(--ok)">${fmt(totalCollectedMvr)}</div>
+        <div class="capacity-bar"><div class="capacity-fill" style="width:${totalDue?Math.min(100,totalCollectedMvr/totalDue*100):0}%"></div></div>
+        ${totalCollectedSar ? `<div style="font-size:12px;color:#6b6252;margin-top:8px;">Plus ${fmtSar(totalCollectedSar)} in trip payments</div>` : ''}
       </div>
     </div>
   `;
@@ -2951,7 +2961,7 @@ function renderPayments(){
             return `<tr>
               <td>${esc(h?.full_name||'Unknown')}${trips.length?`<div style="font-size:11px;color:#8a8168;">${trips.map(t=>esc(t.trip_name)).join(', ')}</div>`:''}</td>
               <td data-label="Group">${esc(grp?.name||'—')}</td>
-              <td data-label="Amount">${fmt(p.amount)}</td>
+              <td data-label="Amount">${trips.length ? fmtSar(p.amount) : fmt(p.amount)}</td>
               <td data-label="Method" style="text-transform:capitalize;">${p.method.replace('_',' ')}</td>
               <td data-label="Date">${p.paid_on}</td>
               <td data-label="Reference">${esc(p.reference||'—')}</td>
@@ -2983,13 +2993,20 @@ function closeTodaySalesSummary(){
 }
 function renderTodaySalesSummary(){
   const rows = todaysSalesRows();
-  const total = rows.reduce((s,r)=>s+Number(r.payment.amount),0);
+  // Umrah package payments (MVR) and ziyarat trip payments (SAR) are different currencies, so
+  // they're never summed into one figure -- every total here is split by currency instead.
+  const totalMvr = rows.filter(r=>!r.trips.length).reduce((s,r)=>s+Number(r.payment.amount),0);
+  const totalSar = rows.filter(r=>r.trips.length).reduce((s,r)=>s+Number(r.payment.amount),0);
   const methods = ['cash','bank_transfer','other'];
-  const methodTotals = methods.map(m=>({
-    method: m,
-    count: rows.filter(r=>r.payment.method===m).length,
-    amount: rows.filter(r=>r.payment.method===m).reduce((s,r)=>s+Number(r.payment.amount),0)
-  })).filter(m=>m.count>0);
+  const methodTotals = methods.map(m=>{
+    const mRows = rows.filter(r=>r.payment.method===m);
+    return {
+      method: m,
+      count: mRows.length,
+      mvr: mRows.filter(r=>!r.trips.length).reduce((s,r)=>s+Number(r.payment.amount),0),
+      sar: mRows.filter(r=>r.trips.length).reduce((s,r)=>s+Number(r.payment.amount),0),
+    };
+  }).filter(m=>m.count>0);
   return `
     <div class="toolbar">
       <button class="ghost" onclick="closeTodaySalesSummary()">← Back to payments</button>
@@ -3000,8 +3017,9 @@ function renderTodaySalesSummary(){
     <p style="color:#6b6252;margin-bottom:16px;">${todayIso()}</p>
     <div class="grid grid-4" style="margin-bottom:16px;">
       <div class="card"><div class="stat-label">Payments today</div><div class="stat-value">${rows.length}</div></div>
-      <div class="card"><div class="stat-label">Total collected</div><div class="stat-value" style="color:var(--ok)">${fmt(total)}</div></div>
-      ${methodTotals.map(m=>`<div class="card"><div class="stat-label">${titleCase(m.method.replace('_',' '))}</div><div class="stat-value">${fmt(m.amount)}</div></div>`).join('')}
+      <div class="card"><div class="stat-label">Total collected (MVR)</div><div class="stat-value" style="color:var(--ok)">${fmt(totalMvr)}</div></div>
+      <div class="card"><div class="stat-label">Total collected (SAR)</div><div class="stat-value" style="color:var(--ok)">${fmtSar(totalSar)}</div></div>
+      ${methodTotals.map(m=>`<div class="card"><div class="stat-label">${titleCase(m.method.replace('_',' '))}</div><div class="stat-value" style="font-size:15px;">${[m.mvr?fmt(m.mvr):'', m.sar?fmtSar(m.sar):''].filter(Boolean).join(' + ')}</div></div>`).join('')}
     </div>
     <div class="card table-wrap">
       <table>
@@ -3013,7 +3031,7 @@ function renderTodaySalesSummary(){
             <td data-label="Trips">${r.trips.length?esc(r.trips.map(t=>t.trip_name).join(', ')):'—'}</td>
             <td data-label="Method" style="text-transform:capitalize;">${r.payment.method.replace('_',' ')}</td>
             <td data-label="Reference">${esc(r.payment.reference||'—')}</td>
-            <td data-label="Amount">${fmt(r.payment.amount)}</td>
+            <td data-label="Amount">${r.trips.length ? fmtSar(r.payment.amount) : fmt(r.payment.amount)}</td>
           </tr>`).join('') || `<tr><td colspan="6" class="empty">No payments recorded today yet.</td></tr>`}
         </tbody>
       </table>
@@ -3022,27 +3040,31 @@ function renderTodaySalesSummary(){
 }
 function exportTodaySalesXlsx(){
   const rows = todaysSalesRows();
-  const total = rows.reduce((s,r)=>s+Number(r.payment.amount),0);
+  const totalMvr = rows.filter(r=>!r.trips.length).reduce((s,r)=>s+Number(r.payment.amount),0);
+  const totalSar = rows.filter(r=>r.trips.length).reduce((s,r)=>s+Number(r.payment.amount),0);
   const aoa = [
     ['Today\'s Sales Summary', todayIso()],
     [],
-    ['Haji','Group','Trips','Method','Reference','Amount'],
+    ['Haji','Group','Trips','Method','Reference','Currency','Amount'],
     ...rows.map(r=>[
       r.haji?.full_name||'Unknown',
       r.group?.name||'',
       r.trips.map(t=>t.trip_name).join(', '),
       titleCase(r.payment.method.replace('_',' ')),
       r.payment.reference||'',
+      r.trips.length ? 'SAR' : 'MVR',
       Number(r.payment.amount)
     ]),
     [],
-    ['', '', '', '', 'Total', total]
+    ['', '', '', '', '', 'Total (MVR)', totalMvr],
+    ['', '', '', '', '', 'Total (SAR)', totalSar]
   ];
   exportRowsToXlsx(`Todays-Sales-Summary-${todayIso()}.xlsx`, 'Sales Summary', aoa);
 }
 function exportTodaySalesPdf(){
   const rows = todaysSalesRows();
-  const total = rows.reduce((s,r)=>s+Number(r.payment.amount),0);
+  const totalMvr = rows.filter(r=>!r.trips.length).reduce((s,r)=>s+Number(r.payment.amount),0);
+  const totalSar = rows.filter(r=>r.trips.length).reduce((s,r)=>s+Number(r.payment.amount),0);
   const body = `
     <h1>Today's Sales Summary</h1>
     <div class="sub">${esc(todayIso())} · ${rows.length} payment${rows.length===1?'':'s'}</div>
@@ -3055,9 +3077,10 @@ function exportTodaySalesPdf(){
           <td>${r.trips.length?esc(r.trips.map(t=>t.trip_name).join(', ')):'—'}</td>
           <td style="text-transform:capitalize;">${esc(r.payment.method.replace('_',' '))}</td>
           <td>${esc(r.payment.reference||'—')}</td>
-          <td>${fmt(r.payment.amount)}</td>
+          <td>${r.trips.length ? fmtSar(r.payment.amount) : fmt(r.payment.amount)}</td>
         </tr>`).join('') || `<tr><td colspan="6">No payments recorded today.</td></tr>`}
-        <tr class="total-row"><td colspan="5">Total</td><td>${fmt(total)}</td></tr>
+        <tr class="total-row"><td colspan="5">Total (MVR)</td><td>${fmt(totalMvr)}</td></tr>
+        <tr class="total-row"><td colspan="5">Total (SAR)</td><td>${fmtSar(totalSar)}</td></tr>
       </tbody>
     </table>
   `;
@@ -3185,8 +3208,8 @@ function receiptBodyHtml(paymentId){
       <tr><td>Pilgrim</td><td>${esc(h?.full_name||'—')}</td></tr>
       <tr><td>Passport</td><td>${esc(h?.passport_no||'—')}</td></tr>
       <tr><td>Package</td><td>${esc(pkg?.name||'—')}</td></tr>
-      ${trips.length?`<tr><td>Trips</td><td>${trips.map(t=>`${esc(t.trip_name)} (${fmt(t.price)})`).join(', ')}</td></tr>`:''}
-      <tr><td>Amount received</td><td>${fmt(p.amount)}</td></tr>
+      ${trips.length?`<tr><td>Trips</td><td>${trips.map(t=>`${esc(t.trip_name)} (${fmtSar(t.price)})`).join(', ')}</td></tr>`:''}
+      <tr><td>Amount received</td><td>${trips.length ? fmtSar(p.amount) : fmt(p.amount)}</td></tr>
       <tr><td>Method</td><td style="text-transform:capitalize;">${p.method.replace('_',' ')}</td></tr>
       <tr><td>Date</td><td>${p.paid_on}</td></tr>
       <tr><td>Reference</td><td>${esc(p.reference||'—')}</td></tr>
@@ -3225,7 +3248,7 @@ async function shareReceipt(paymentId){
     bodyHtml,
     captureStyle: RECEIPT_CAPTURE_STYLE,
     captureClass: 'receipt-capture',
-    shareText: `Payment receipt for ${h?.full_name||'pilgrim'} — ${fmt(p.amount)} received on ${p.paid_on}.`,
+    shareText: `Payment receipt for ${h?.full_name||'pilgrim'} — ${paymentAmountFmt(p)} received on ${p.paid_on}.`,
     filename: `Receipt-${(h?.full_name||'pilgrim').replace(/\s+/g,'-')}.png`,
     title: 'Payment Receipt'
   });
@@ -3495,8 +3518,8 @@ function collectorGrandTotal(){
 }
 function tripCheckboxHtml(tripType, checked, onchangeExpr, category, alreadyPaid){
   const priceLabel = category
-    ? (category==='Under 5' ? 'Free' : fmt(priceForCategory(tripType, category)))
-    : `${fmt(tripType.price_adult)} adult / ${fmt(tripType.price_child)} child`;
+    ? (category==='Under 5' ? 'Free' : fmtSar(priceForCategory(tripType, category)))
+    : `${fmtSar(tripType.price_adult)} adult / ${fmtSar(tripType.price_child)} child`;
   // Already-paid trips can't be re-selected here -- ticking one again would record a second,
   // duplicate payment for the same trip.
   return `<label class="trip-check" ${alreadyPaid?'style="opacity:.6;"':''}><input type="checkbox" ${checked?'checked':''} ${alreadyPaid?'disabled title="Already paid — cannot select again"':''} onchange="${onchangeExpr}"/><span class="trip-check-name">${esc(tripType.name)}</span><span class="trip-check-price mono">${priceLabel}</span>${alreadyPaid?'<span class="pill ok">Paid</span>':''}</label>`;
@@ -3600,7 +3623,7 @@ function renderTripCollector(){
             </div>
             <label class="trip-check"><input type="checkbox" ${ph.foc?'checked':''} onchange="toggleCollectorFOC('${id}',this.checked)"/> FOC</label>
             ${state.tripTypes.map(t=>tripCheckboxHtml(t, !!ph.trips[t.id], `toggleCollectorTrip('${id}','${t.id}',this.checked)`, category, paidTrips?.has(t.id))).join('')}
-            <span class="trip-total">${fmt(collectorLineTotal(id))}</span>
+            <span class="trip-total">${fmtSar(collectorLineTotal(id))}</span>
             <button class="danger" onclick="removeFromCollector('${id}')">Remove</button>
           </div>
         `;
@@ -3612,7 +3635,7 @@ function renderTripCollector(){
       <div>
         <div style="font-size:12px;color:#6b6252;">Customers with at least one selected trip</div>
         <div style="font-weight:700;">${eligibleIds.length} customer${eligibleIds.length===1?'':'s'}</div>
-        <div class="stat-value" style="font-size:22px;">${fmt(collectorGrandTotal())}</div>
+        <div class="stat-value" style="font-size:22px;">${fmtSar(collectorGrandTotal())}</div>
       </div>
       <div class="collector-payment-fields">
         <div><label>Method</label>${customSelectHtml({
@@ -3751,8 +3774,8 @@ function renderReportByDate(rows){
         <table>
           <thead><tr><th>Trip</th><th>Paid</th><th>FOC</th><th>Total</th><th>Amount</th></tr></thead>
           <tbody>
-            ${tripRows.map(t=>`<tr><td>${esc(t.name)}</td><td data-label="Paid">${t.paid}</td><td data-label="FOC">${t.foc}</td><td data-label="Total">${t.total}</td><td data-label="Amount">${fmt(t.amount)}</td></tr>`).join('')}
-            <tr class="total-row"><td colspan="3"><strong>Day total</strong></td><td data-label="Total"><strong>${dayTotalCount}</strong></td><td data-label="Amount"><strong>${fmt(dayTotalAmount)}</strong></td></tr>
+            ${tripRows.map(t=>`<tr><td>${esc(t.name)}</td><td data-label="Paid">${t.paid}</td><td data-label="FOC">${t.foc}</td><td data-label="Total">${t.total}</td><td data-label="Amount">${fmtSar(t.amount)}</td></tr>`).join('')}
+            <tr class="total-row"><td colspan="3"><strong>Day total</strong></td><td data-label="Total"><strong>${dayTotalCount}</strong></td><td data-label="Amount"><strong>${fmtSar(dayTotalAmount)}</strong></td></tr>
           </tbody>
         </table>
       </div>
@@ -4275,12 +4298,12 @@ function renderModal(){
       <h3>Ziyarat trip types</h3>
       <p style="font-size:12px;color:#6b6252;">Priced trips offered by Qibla for this Umrah period (e.g. Hira, Taif, Jeddah, Meeqat) — the same trips and prices apply to every group. Under 5s always ride free.</p>
       <div class="assign-list" style="margin:10px 0 14px;">
-        ${state.tripTypes.map(t=>`<div class="assign-row"><span>${esc(t.name)} — Adult ${fmt(t.price_adult)} · Child (5-9) ${fmt(t.price_child)} · Under 5 free</span><button id="del-trip-type-${t.id}" class="danger" onclick="withBusyButton('del-trip-type-${t.id}','Removing…',()=>deleteTripType('${t.id}'))">Remove</button></div>`).join('') || '<div class="empty">No trip types yet</div>'}
+        ${state.tripTypes.map(t=>`<div class="assign-row"><span>${esc(t.name)} — Adult ${fmtSar(t.price_adult)} · Child (5-9) ${fmtSar(t.price_child)} · Under 5 free</span><button id="del-trip-type-${t.id}" class="danger" onclick="withBusyButton('del-trip-type-${t.id}','Removing…',()=>deleteTripType('${t.id}'))">Remove</button></div>`).join('') || '<div class="empty">No trip types yet</div>'}
       </div>
       <div class="field"><input id="trip-type-name" placeholder="e.g. Hira"/></div>
       <div class="two-col">
-        <input id="trip-type-price-adult" type="number" step="0.01" placeholder="Adult price (MVR)"/>
-        <input id="trip-type-price-child" type="number" step="0.01" placeholder="Child 5-9 price (MVR)"/>
+        <input id="trip-type-price-adult" type="number" step="0.01" placeholder="Adult price (SAR)"/>
+        <input id="trip-type-price-child" type="number" step="0.01" placeholder="Child 5-9 price (SAR)"/>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;">
         <button id="add-trip-type-btn" class="gold" style="flex:1" onclick="withBusyButton('add-trip-type-btn','Adding…',()=>addTripType())">Add trip type</button>
