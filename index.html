@@ -1629,10 +1629,10 @@ function renderAuth(){
           <div class="field"><label>Phone number</label><input id="haji-phone" placeholder="Your registered phone number" autocomplete="tel"/></div>
           <button id="haji-signin-btn" class="primary" style="width:100%;margin-top:6px;" onclick="doHajiSignIn()">Sign in</button>
           <p style="font-size:11px;color:#8a8168;margin-top:12px;">Don't have login details? Contact Qibla Team.</p>
-          <button class="link-btn" style="margin-top:14px;" onclick="setAuthMode('staff')">Staff login</button>
         `}
         ${state.canInstall ? `<button class="ghost install-btn" onclick="installApp()">⭳ Install app</button>` : ''}
       </div>
+      ${!staffMode ? `<button style="position:fixed;bottom:14px;right:16px;background:none;border:none;color:rgba(242,236,221,.35);font-size:11px;letter-spacing:.02em;padding:6px;cursor:pointer;" onclick="setAuthMode('staff')">Staff login</button>` : ''}
     </div>
   `;
 }
