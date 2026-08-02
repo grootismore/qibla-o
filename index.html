@@ -2308,7 +2308,7 @@ function renderRawdhaBookings(){
       <label>Filter by bus <span style="font-weight:400;text-transform:none;color:#8a8168;">(handy for checking bookings on the way to Madinah)</span></label>
       ${customSelectHtml({
         id: 'rawdha-bus-filter',
-        options: [{value:'', label:'— All buses —'}, ...state.buses.map(b=>({value:b.id, label:busSelectLabel(b)}))],
+        options: [{value:'', label:'— All buses —'}, ...state.buses.filter(b=>b.leg==='mecca_madinah').map(b=>({value:b.id, label:busSelectLabel(b)}))],
         value: state.rawdhaBusFilter||'',
         onChange: 'setRawdhaBusFilter(this.value)'
       })}
