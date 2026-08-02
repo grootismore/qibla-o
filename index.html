@@ -945,8 +945,11 @@ function hajisForTrip(tripTypeId){
 // member (staff_id) or a manually-typed name (helper_name) for people who aren't in the Staff
 // list, e.g. kitchen staff. Every helper counts as one passenger toward capacity.
 function busHelpersFor(busId){ return state.busHelpers.filter(h=>h.bus_id===busId); }
+// Shown on bus cards, the manifest print-out, and Rawdha helper listings -- anyone who can see
+// a bus (including the Helper role, not just admins) sees this, so it must never include a
+// staff member's role/permission level (e.g. "Qibla Owners"), just their name.
 function busHelperEntryLabel(h){
-  if(h.staff_id){ const s = staffById(h.staff_id); return s ? `${s.full_name} (${roleLabel(s.role)})` : 'Unknown staff'; }
+  if(h.staff_id){ const s = staffById(h.staff_id); return s ? s.full_name : 'Unknown staff'; }
   return h.helper_name || 'Unknown';
 }
 function busRemainingCapacity(bus){
@@ -4788,7 +4791,7 @@ function renderModal(){
             name: 'new_helper',
             options: [
               {value:'', label:'— Select staff or helper —'},
-              ...state.staffList.filter(s=>!assignedStaffIds.has(s.id)).map(s=>({value:s.id, label:`${s.full_name} (${roleLabel(s.role)})`})),
+              ...state.staffList.filter(s=>!assignedStaffIds.has(s.id)).map(s=>({value:s.id, label:`${s.full_name} (Staff)`})),
               ...availableGroupHHajis.map(h=>({value:'haji:'+h.id, label:`${h.full_name} (Group H)`})),
               ...availableExistingNames.map(n=>({value:'existing:'+n, label:`${n} (existing helper)`})),
               {value:'other', label:'Other (type new name)'}
