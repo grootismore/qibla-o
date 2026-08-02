@@ -2919,6 +2919,18 @@ function existingHelperNames(){
   state.busHelpers.forEach(h=>{ if(!h.staff_id && h.helper_name?.trim()) names.add(h.helper_name.trim()); });
   return [...names].sort((a,b)=>a.localeCompare(b));
 }
+// Unlike a staff account, a manually-typed helper name isn't a single record -- it's just text
+// repeated across however many bus_helpers rows used it. Group by name so Settings can show and
+// clear out one entry per name instead of one per bus assignment.
+function manualHelperNameCounts(){
+  const counts = new Map();
+  state.busHelpers.forEach(h=>{
+    if(h.staff_id || !h.helper_name?.trim()) return;
+    const name = h.helper_name.trim();
+    counts.set(name, (counts.get(name)||0)+1);
+  });
+  return [...counts.entries()].map(([name,count])=>({name,count})).sort((a,b)=>a.name.localeCompare(b.name));
+}
 // Pilgrims entered under the "H" group are people who actually travel as helpers rather than
 // hajis -- offer them in the helper picker too, alongside registered staff.
 function isGroupHHaji(h){
@@ -2952,6 +2964,17 @@ async function removeBusHelper(id, busId){
   if(error){ showNotice(error.message, 'error'); return; }
   await loadGroupData();
   openModal('busHelpers', {busId});
+}
+// Removing a manually-typed helper one bus at a time still leaves it in the "existing helper"
+// suggestion list as long as it's assigned to any other bus -- this clears every bus_helpers
+// row using the name at once, so a retired/incorrect entry can be purged for good in one step.
+async function removeManualHelperName(name){
+  if(!requireOnline()) return;
+  const { error } = await sb.from('bus_helpers').delete().eq('helper_name', name).is('staff_id', null);
+  if(error){ showNotice(error.message, 'error'); return; }
+  await loadGroupData();
+  render();
+  showNotice(`"${name}" removed from all buses.`, 'success');
 }
 async function deleteBus(id){
   const { error } = await sb.from('buses').delete().eq('id', id);
@@ -4153,6 +4176,20 @@ function renderSettings(){
         ${state.activeGroupId ? `Applies to <strong>${esc(state.groups.find(g=>g.id===state.activeGroupId)?.name||'')}</strong> unless you choose otherwise inside.` : ''}
       </p>
       <button class="gold" style="width:100%;" onclick="openModal('bulkImport', {entity:'hajis', groupId: state.activeGroupId})">Import from CSV…</button>
+    </div>
+    <div class="card" style="margin-bottom:16px;max-width:520px;">
+      <h3 style="margin-bottom:6px;">Manually-added bus helpers</h3>
+      <p style="font-size:12px;color:#6b6252;margin-bottom:10px;">Helper names typed in via "Other" on a bus (rather than picked from staff) stay in the picker's suggestions as long as they're assigned to any bus. Remove one here to clear it from every bus at once.</p>
+      <div class="assign-list">
+        ${manualHelperNameCounts().map(({name,count})=>{
+          const btnId = 'del-manual-helper-'+encodeURIComponent(name);
+          return `
+          <div class="assign-row">
+            <span>${esc(name)} <span style="color:#8a8168;font-size:12px;">— on ${count} bus${count===1?'':'es'}</span></span>
+            <button id="${btnId}" class="danger" onclick="withBusyButton('${btnId}','Removing…',()=>removeManualHelperName('${esc(name)}'))">Remove</button>
+          </div>
+        `;}).join('') || `<div class="empty">No manually-typed helper names in use.</div>`}
+      </div>
     </div>
     <div class="card" style="margin-bottom:16px;max-width:520px;border-color:var(--danger);">
       <h3 style="margin-bottom:6px;color:var(--danger);">Danger zone</h3>
