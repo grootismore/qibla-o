@@ -2986,23 +2986,30 @@ async function toggleBoarded(assignmentId, boarded){
     const boardedCount = state.busAssignments.filter(a=>a.bus_id===busId && a.boarded).length;
     progress.textContent = `${boardedCount} / ${total} boarded`;
   }
-  const { error } = await sb.from('bus_assignments').update({boarded}).eq('id', assignmentId);
-  if(error){
+  // .select() forces PostgREST to return the rows it actually touched -- without it, an update
+  // blocked by a missing RLS policy comes back as a "successful" no-op with no error at all,
+  // which is exactly what silently broke this before the update policy existed.
+  const { data, error } = await sb.from('bus_assignments').update({boarded}).eq('id', assignmentId).select();
+  if(error || !data?.length){
     rec.boarded = !boarded;
-    if(row) row.classList.toggle('boarded', !boarded);
+    if(row){
+      row.classList.toggle('boarded', !boarded);
+      const checkbox = row.querySelector('input[type=checkbox]');
+      if(checkbox) checkbox.checked = !boarded;
+    }
     if(progress){
       const total = state.busAssignments.filter(a=>a.bus_id===busId).length;
       const boardedCount = state.busAssignments.filter(a=>a.bus_id===busId && a.boarded).length;
       progress.textContent = `${boardedCount} / ${total} boarded`;
     }
-    showNotice(error.message, 'error');
+    showNotice(error?.message || 'Could not save — please try again.', 'error');
   }
 }
 async function moveHajiBus(assignmentId, fromBusId, toBusId){
   if(!toBusId) return;
   if(!requireOnline()) return;
-  const { error } = await sb.from('bus_assignments').update({bus_id:toBusId}).eq('id', assignmentId);
-  if(error){ showNotice(error.message, 'error'); return; }
+  const { data, error } = await sb.from('bus_assignments').update({bus_id:toBusId}).eq('id', assignmentId).select();
+  if(error || !data?.length){ showNotice(error?.message || 'Could not move — please try again.', 'error'); return; }
   await loadGroupData();
   openModal('busRoster', {busId: fromBusId});
   showNotice('Pilgrim moved to another bus.', 'success');
