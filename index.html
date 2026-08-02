@@ -922,7 +922,11 @@ function busRosterEntries(busId){
     .filter(a=>a.bus_id===busId)
     .map(a=>({ assignment:a, haji: hajiById(a.haji_id) }))
     .filter(e=>e.haji)
-    .sort((a,b)=>naturalCompare(a.haji.full_name||'', b.haji.full_name||''));
+    .sort((a,b)=>{
+      const groupCmp = naturalCompare(groupById(a.haji.group_id)?.name||'', groupById(b.haji.group_id)?.name||'');
+      if(groupCmp!==0) return groupCmp;
+      return naturalCompare(a.haji.full_name||'', b.haji.full_name||'');
+    });
 }
 function hajiBus(hajiId){
   const ba = state.busAssignments.find(a=>a.haji_id===hajiId);
