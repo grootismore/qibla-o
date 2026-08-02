@@ -308,6 +308,10 @@
     .table-wrap.stat-compact td:last-child{margin-right:0;}
     .table-wrap.stat-compact td:first-child{display:block;width:100%;font-weight:600;margin-bottom:6px;}
     .table-wrap tr.total-row{background:#faf6ea;border-color:var(--teal);}
+
+    /* The Umrah month selector floats right on desktop, which leaves a big empty gap beside it
+       on narrow screens -- fill the row instead. */
+    .month-select-wrap{width:100%;min-width:0;}
   }
 
   @media (max-width:420px){
@@ -1757,7 +1761,7 @@ function renderDashboard(){
         <div class="dash-greeting">Welcome back</div>
         <div class="dash-sub">Here's how ${esc(monthLabel)} is looking, at a glance.</div>
       </div>
-      <div style="min-width:220px;">${monthSelectorHtml()}</div>
+      <div class="month-select-wrap" style="min-width:220px;">${monthSelectorHtml()}</div>
     </div>
   `;
 
@@ -1820,7 +1824,7 @@ function renderGroups(){
   const sortedGroups = [...monthGroups].sort((a,b)=>(state.groupHajiCounts.get(b.id)||0)-(state.groupHajiCounts.get(a.id)||0));
   return `
     <div style="display:flex;justify-content:flex-end;margin-bottom:14px;">
-      <div style="min-width:220px;">${monthSelectorHtml()}</div>
+      <div class="month-select-wrap" style="min-width:220px;">${monthSelectorHtml()}</div>
     </div>
     <div class="grid grid-4" style="margin-bottom:16px;">
       <div class="card"><div class="stat-label">Groups</div><div class="stat-value">${monthGroups.length}</div></div>
