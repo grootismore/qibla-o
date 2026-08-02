@@ -35,6 +35,8 @@
     --radius:10px;
   }
   *{box-sizing:border-box;}
+  html,body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+  input,textarea{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default;}
   body{margin:0;background:var(--sand);color:var(--ink);font-family:'Inter',sans-serif;font-size:14px;overscroll-behavior-y:contain;}
   button,.nav-item,.bottom-nav-item,select,input,.pill{-webkit-tap-highlight-color:transparent;}
   .nav-item,.bottom-nav-item{user-select:none;-webkit-user-select:none;}
@@ -399,6 +401,14 @@ async function trackedFetch(input, init){
 }
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { global: { fetch: trackedFetch } });
+
+// Native iOS/Android apps don't expose a right-click/long-press context menu or let you select
+// UI text -- block both so this feels like an app rather than a webpage. Text inputs are exempt
+// (see the CSS user-select rules) since people still need to select/copy what they've typed.
+document.addEventListener('contextmenu', (e)=>{
+  if(e.target.closest('input,textarea')) return;
+  e.preventDefault();
+});
 
 window.addEventListener('unhandledrejection', (e)=>{
   console.error('Unhandled error:', e.reason);
