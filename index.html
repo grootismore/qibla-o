@@ -124,8 +124,9 @@
   .toast-close{background:none;border:none;cursor:pointer;color:#8a8168;font-size:16px;line-height:1;padding:0;flex-shrink:0;}
   @keyframes toast-in{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:translateY(0);}}
   @keyframes toast-out{from{opacity:1;}to{opacity:0;transform:translateY(-8px);}}
-  .modal-bg{position:fixed;inset:0;background:rgba(28,35,33,.5);display:flex;align-items:center;justify-content:center;z-index:100;}
-  .modal{background:var(--sand);border-radius:14px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto;border:1px solid var(--line);}
+  .modal-bg{position:fixed;inset:0;background:rgba(28,35,33,.5);display:flex;align-items:center;justify-content:center;z-index:100;overscroll-behavior:contain;}
+  .modal{background:var(--sand);border-radius:14px;padding:24px;width:420px;max-width:90vw;max-height:85vh;overflow-y:auto;border:1px solid var(--line);overscroll-behavior:contain;}
+  html.modal-open,html.modal-open body{overflow:hidden;height:100%;}
   .modal h3{margin-bottom:16px;}
   .field{margin-bottom:12px;}
   .two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
@@ -1559,6 +1560,10 @@ function hideAppSplash(){
 }
 function render(){
   hideAppSplash();
+  // A modal covers the screen but doesn't itself stop the page behind it from scrolling on
+  // touch devices -- lock body scroll while one's open so a swipe inside/around the modal
+  // can't scroll the content underneath instead.
+  document.documentElement.classList.toggle('modal-open', !!state.modal);
   if(!state.session){ renderAuth(); return; }
   if(state.offlineMode && state.offlineNoCache){ renderOfflineNoCacheScreen(); return; }
   if(state.isHaji){ renderHajiDashboard(); return; }
