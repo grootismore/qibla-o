@@ -163,6 +163,10 @@
   .capacity-fill{height:100%;background:var(--teal);}
   .capacity-fill.over{background:var(--danger);}
   .roster-row.boarded{background:#eef6ee;}
+  .roster-row input[type=checkbox]{width:auto;flex-shrink:0;}
+  .roster-move{flex-shrink:0;width:84px;}
+  .roster-move .cselect-trigger{padding:5px 6px;font-size:11px;min-height:0;}
+  .roster-move .cselect-panel{left:auto;right:0;width:200px;}
   .collector-template{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;padding:10px 14px;background:var(--sand-deep);border-radius:8px;margin-bottom:12px;}
   .trip-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 0;border-bottom:1px solid var(--line);}
   .trip-row:last-child{border-bottom:none;}
@@ -4748,21 +4752,21 @@ function renderModal(){
       <p style="font-size:12px;color:#8a8168;margin-bottom:12px;">Helpers: ${helpers.length?esc(helpers.map(busHelperEntryLabel).join(', ')):'—'}</p>
       <div class="assign-list" style="max-height:420px;overflow-y:auto;">
         ${entries.map(({assignment,haji})=>`
-          <div id="roster-row-${assignment.id}" class="roster-row ${assignment.boarded?'boarded':''}" style="padding:10px 0;border-bottom:1px solid #eee6d3;">
-            <label style="display:flex;align-items:center;gap:10px;cursor:${editable?'pointer':'default'};">
+          <div id="roster-row-${assignment.id}" class="roster-row ${assignment.boarded?'boarded':''}" style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid #eee6d3;">
+            <label style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:${editable?'pointer':'default'};">
               <input type="checkbox" ${assignment.boarded?'checked':''} ${editable?'':'disabled'} onchange="toggleBoarded('${assignment.id}', this.checked)"/>
-              <span style="flex:1;">
-                <strong>${esc(haji.full_name)}</strong>
+              <span style="flex:1;min-width:0;">
+                <strong style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(haji.full_name)}</strong>
                 <div style="font-size:11px;color:#8a8168;">${esc(groupById(haji.group_id)?.name||'—')}</div>
               </span>
             </label>
             ${editable && otherBuses.length ? `
-              <div style="margin-top:6px;">
+              <div class="roster-move">
                 ${customSelectHtml({
                   id: 'move-bus-'+assignment.id,
-                  options: [{value:'', label:'Move to another bus…'}, ...otherBuses.map(b=>({value:b.id, label:`Bus ${b.bus_number} (${busRemainingCapacity(b)} left)`}))],
+                  options: [{value:'', label:'Move…'}, ...otherBuses.map(b=>({value:b.id, label:`Bus ${b.bus_number} (${busRemainingCapacity(b)} left)`}))],
                   value: '',
-                  placeholder: 'Move to another bus…',
+                  placeholder: 'Move…',
                   onChange: `moveHajiBus('${assignment.id}','${bus.id}', this.value)`
                 })}
               </div>
