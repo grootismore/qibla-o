@@ -160,6 +160,7 @@
   .capacity-bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:6px;}
   .capacity-fill{height:100%;background:var(--teal);}
   .capacity-fill.over{background:var(--danger);}
+  .roster-row.boarded{background:#eef6ee;}
   .collector-template{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;padding:10px 14px;background:var(--sand-deep);border-radius:8px;margin-bottom:12px;}
   .trip-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 0;border-bottom:1px solid var(--line);}
   .trip-row:last-child{border-bottom:none;}
@@ -899,6 +900,15 @@ function hajiPaidTripTypeIdsMap(){
 }
 function roomOccupants(roomId){ return state.roomAssignments.filter(a=>a.room_id===roomId).map(a=>hajiById(a.haji_id)).filter(Boolean); }
 function busOccupants(busId){ return state.busAssignments.filter(a=>a.bus_id===busId).map(a=>hajiById(a.haji_id)).filter(Boolean); }
+// Same rows as busOccupants but keeps the assignment record alongside each haji, since the
+// boarding checklist and bus-swap dropdown need the assignment id (not exposed by busOccupants).
+function busRosterEntries(busId){
+  return state.busAssignments
+    .filter(a=>a.bus_id===busId)
+    .map(a=>({ assignment:a, haji: hajiById(a.haji_id) }))
+    .filter(e=>e.haji)
+    .sort((a,b)=>naturalCompare(a.haji.full_name||'', b.haji.full_name||''));
+}
 function hajiBus(hajiId){
   const ba = state.busAssignments.find(a=>a.haji_id===hajiId);
   return ba ? state.buses.find(b=>b.id===ba.bus_id) : null;
@@ -2770,14 +2780,15 @@ function busCardsHtml(buses, leg){
     const over = total > b.capacity;
     const trip = leg==='ziyarat' ? state.tripTypes.find(t=>t.id===b.trip_type_id) : null;
     return `<div class="card">
-      <div style="display:flex;justify-content:space-between;">
+      <div style="display:flex;justify-content:space-between;cursor:pointer;" onclick="openModal('busRoster',{busId:'${b.id}'})">
         <strong>Bus ${esc(b.bus_number)}</strong>
         <span class="pill ${over?'bad':'ok'}">${total}/${b.capacity}</span>
       </div>
       ${trip ? `<div style="margin:4px 0;"><span class="pill warn">${esc(trip.name)}</span></div>` : ''}
       <div style="font-size:12px;color:#6b6252;margin:4px 0 8px;">Helpers: ${helpers.length?esc(helpers.map(busHelperEntryLabel).join(', ')):'—'}</div>
       <div class="capacity-bar"><div class="capacity-fill ${over?'over':''}" style="width:${Math.min(100,total/b.capacity*100)}%"></div></div>
-      <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('assignBus',{busId:'${b.id}'})" ${can('manageBuses')?'':'disabled'}>Assign pilgrims</button>
+      <button class="ghost" style="margin-top:10px;width:100%;" onclick="openModal('busRoster',{busId:'${b.id}'})">Boarding checklist</button>
+      <button class="ghost" style="margin-top:8px;width:100%;" onclick="openModal('assignBus',{busId:'${b.id}'})" ${can('manageBuses')?'':'disabled'}>Assign pilgrims</button>
       <button class="ghost" style="margin-top:8px;width:100%;" onclick="exportBusManifest('${b.id}')" ${total?'':'disabled'}>View / print list</button>
       ${can('manageBuses') ? `
         <div style="display:flex;gap:8px;margin-top:8px;">
@@ -2934,6 +2945,44 @@ async function toggleBusAssign(busId, hajiId, assign){
   }
   await loadGroupData();
   openModal('assignBus', {busId, searchQuery: state.modal?.data?.searchQuery});
+}
+// Ticking pilgrims off during boarding needs to feel instant even with a long roster, so this
+// updates the DOM directly instead of going through the full render() + reopen-modal cycle that
+// every other bus mutation uses.
+async function toggleBoarded(assignmentId, boarded){
+  if(!requireOnline()) return;
+  const rec = state.busAssignments.find(a=>a.id===assignmentId);
+  if(!rec) return;
+  rec.boarded = boarded;
+  const row = document.getElementById('roster-row-'+assignmentId);
+  if(row) row.classList.toggle('boarded', boarded);
+  const busId = rec.bus_id;
+  const progress = document.getElementById('roster-progress');
+  if(progress){
+    const total = state.busAssignments.filter(a=>a.bus_id===busId).length;
+    const boardedCount = state.busAssignments.filter(a=>a.bus_id===busId && a.boarded).length;
+    progress.textContent = `${boardedCount} / ${total} boarded`;
+  }
+  const { error } = await sb.from('bus_assignments').update({boarded}).eq('id', assignmentId);
+  if(error){
+    rec.boarded = !boarded;
+    if(row) row.classList.toggle('boarded', !boarded);
+    if(progress){
+      const total = state.busAssignments.filter(a=>a.bus_id===busId).length;
+      const boardedCount = state.busAssignments.filter(a=>a.bus_id===busId && a.boarded).length;
+      progress.textContent = `${boardedCount} / ${total} boarded`;
+    }
+    showNotice(error.message, 'error');
+  }
+}
+async function moveHajiBus(assignmentId, fromBusId, toBusId){
+  if(!toBusId) return;
+  if(!requireOnline()) return;
+  const { error } = await sb.from('bus_assignments').update({bus_id:toBusId}).eq('id', assignmentId);
+  if(error){ showNotice(error.message, 'error'); return; }
+  await loadGroupData();
+  openModal('busRoster', {busId: fromBusId});
+  showNotice('Pilgrim moved to another bus.', 'success');
 }
 // Live-filters the assignBus modal's family clusters by name/passport/group/flight, matching
 // the searchable-list pattern used elsewhere (Hajis list, Trip Payment Collector).
@@ -4674,6 +4723,46 @@ function renderModal(){
           <button type="button" class="ghost" onclick="closeModal()">Close</button>
         </div>
       </form>
+    `;
+  } else if(type==='busRoster'){
+    const bus = state.buses.find(b=>b.id===data.busId);
+    const entries = busRosterEntries(bus.id);
+    const helpers = busHelpersFor(bus.id);
+    const boardedCount = entries.filter(e=>e.assignment.boarded).length;
+    const scopeKey = busScopeKey(bus);
+    const otherBuses = state.buses.filter(b=>b.id!==bus.id && busScopeKey(b)===scopeKey);
+    const editable = can('manageBuses');
+    body = `
+      <h3>Boarding checklist — Bus ${esc(bus.bus_number)}</h3>
+      <p id="roster-progress" style="font-size:13px;color:#6b6252;margin-bottom:4px;">${boardedCount} / ${entries.length} boarded</p>
+      <p style="font-size:12px;color:#8a8168;margin-bottom:12px;">Helpers: ${helpers.length?esc(helpers.map(busHelperEntryLabel).join(', ')):'—'}</p>
+      <div class="assign-list" style="max-height:420px;overflow-y:auto;">
+        ${entries.map(({assignment,haji})=>`
+          <div id="roster-row-${assignment.id}" class="roster-row ${assignment.boarded?'boarded':''}" style="padding:10px 0;border-bottom:1px solid #eee6d3;">
+            <label style="display:flex;align-items:center;gap:10px;cursor:${editable?'pointer':'default'};">
+              <input type="checkbox" ${assignment.boarded?'checked':''} ${editable?'':'disabled'} onchange="toggleBoarded('${assignment.id}', this.checked)"/>
+              <span style="flex:1;">
+                <strong>${esc(haji.full_name)}</strong>
+                <div style="font-size:11px;color:#8a8168;">${esc(groupById(haji.group_id)?.name||'—')}</div>
+              </span>
+            </label>
+            ${editable && otherBuses.length ? `
+              <div style="margin-top:6px;">
+                ${customSelectHtml({
+                  id: 'move-bus-'+assignment.id,
+                  options: [{value:'', label:'Move to another bus…'}, ...otherBuses.map(b=>({value:b.id, label:`Bus ${b.bus_number} (${busRemainingCapacity(b)} left)`}))],
+                  value: '',
+                  placeholder: 'Move to another bus…',
+                  onChange: `moveHajiBus('${assignment.id}','${bus.id}', this.value)`
+                })}
+              </div>
+            ` : ''}
+          </div>
+        `).join('') || '<div class="empty">No pilgrims assigned to this bus yet.</div>'}
+      </div>
+      <div style="margin-top:14px;">
+        <button type="button" class="ghost" style="width:100%;" onclick="closeModal()">Close</button>
+      </div>
     `;
   } else if(type==='assignBus'){
     const bus = state.buses.find(b=>b.id===data.busId);
