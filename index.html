@@ -3997,7 +3997,7 @@ function renderStaff(){
     </div>
     <div class="card table-wrap">
       <table id="staff-table">
-        <thead><tr><th>Name</th><th>Role</th></tr></thead>
+        <thead><tr><th>Name</th><th>Role</th><th></th></tr></thead>
         <tbody>
           ${state.staffList.map(s=>{
             const isSelf = s.id===state.session.user.id;
@@ -4019,8 +4019,11 @@ function renderStaff(){
                 })}
                 ${(!isSelf && !canEdit) ? '<div style="font-size:11px;color:#8a8168;margin-top:4px;">Only a Qibla Owner can change this.</div>' : ''}
               </td>
+              <td data-label="">
+                ${locked ? '' : `<button id="del-staff-${s.id}" class="danger" onclick="withBusyButton('del-staff-${s.id}','Removing…',()=>deleteStaff('${s.id}'))">Remove</button>`}
+              </td>
             </tr>
-          `;}).join('') || `<tr><td colspan="2" class="empty">No staff accounts yet.</td></tr>`}
+          `;}).join('') || `<tr><td colspan="3" class="empty">No staff accounts yet.</td></tr>`}
         </tbody>
       </table>
       <div id="staff-no-results" class="empty" style="display:none;">No matches found.</div>
@@ -4031,6 +4034,17 @@ async function updateStaffRole(id, role){
   const { error } = await sb.from('staff').update({role}).eq('id', id);
   if(error){ showNotice(error.message, 'error'); }
   await loadStaffList();
+}
+// Unused/stray staff logins (e.g. duplicate or test accounts created by mistake) otherwise
+// clutter the "Add helper" picker on every bus forever, since there's no other way to clear
+// them out. If this account is shared with a pilgrim login (Group H granted staff access),
+// the RPC only revokes staff access and leaves the pilgrim login intact.
+async function deleteStaff(id){
+  if(!requireOnline()) return;
+  const { error } = await sb.rpc('admin_delete_staff', { p_staff_id: id });
+  if(error){ showNotice(error.message, 'error'); return; }
+  await loadStaffList();
+  showNotice('Staff account removed.', 'success');
 }
 async function saveAddStaff(e){
   e.preventDefault();
